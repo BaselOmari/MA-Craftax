@@ -27,7 +27,7 @@ obs, states, rewards, dones, infos = env.step(rng_step, states, actions)
 ## Setup
 To get started with using the environment please install all needed dependencies using:
 ```sh
-pip install .
+pip install -r requirements.txt
 ```
 
 ## Training Baselines

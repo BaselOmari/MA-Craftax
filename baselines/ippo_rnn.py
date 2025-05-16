@@ -470,7 +470,7 @@ def single_run(config):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("config_file", help="Name of the config YAML file (in baselines/config/)")
+    parser.add_argument("--config_file", help="Name of the config YAML file (in baselines/config/)")
     args = parser.parse_args()
 
     config_path = os.path.join(os.path.dirname(__file__), "config", args.config_file)
