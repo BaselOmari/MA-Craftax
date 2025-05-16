@@ -39,7 +39,7 @@ To use, following the steps below:
   - Default configurations for experiments are already provided
   - Make sure to modify the WandB information for appropriate logging
 - Run one of the provided training scripts using the command
-```
+```sh
 python baselines/<training-script> --config_file=<config-file-name>
 ```
 
