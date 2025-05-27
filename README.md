@@ -1,4 +1,9 @@
 # Multi-Agent Craftax
+<p align="middle">
+  <img src="https://raw.githubusercontent.com/MichaelTMatthews/Craftax/main/images/archery.gif" width="200" />
+  <img src="https://raw.githubusercontent.com/MichaelTMatthews/Craftax/main/images/building.gif" width="200" /> 
+  <img src="https://raw.githubusercontent.com/MichaelTMatthews/Craftax/main/images/dungeon_crawling.gif" width="200" />
+</p>
 We introduce Craftax-MA and Craftax-Coop, MARL environments written entirely in JAX. Craftax-MA reimplements the exact game mechanics as Craftax, while Craftax-Coop introduces agent heterogeniety, trading and other mechanics that require cooperation for success!
 
 ## Basic Usage
