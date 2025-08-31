@@ -3,10 +3,19 @@ from craftax_ma.util.maths_utils import *
 import jax
 
 
-def interplayer_interaction(state, block_position, is_doing_action, env_params, static_params):
+def interplayer_interaction(
+    state, block_position, is_doing_action, env_params, static_params
+):
     # If other player is down revive them, otherwise damage (if friendly fire is enabled)
 
-    in_other_player = (jnp.expand_dims(state.player_position, axis=1) == jnp.expand_dims(block_position, axis=0)).all(axis=2).T
+    in_other_player = (
+        (
+            jnp.expand_dims(state.player_position, axis=1)
+            == jnp.expand_dims(block_position, axis=0)
+        )
+        .all(axis=2)
+        .T
+    )
     player_interacting_with = jnp.argmax(in_other_player, axis=-1)
 
     is_interacting_with_other_player = jnp.logical_and(
@@ -16,17 +25,22 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     is_player_being_interacted_with = jnp.any(
         jnp.logical_and(
             jnp.arange(static_params.player_count)[:, None] == player_interacting_with,
-            is_interacting_with_other_player[None, :]
+            is_interacting_with_other_player[None, :],
         ),
-        axis=-1
+        axis=-1,
     )
     is_player_being_revived = jnp.logical_and(
         is_player_being_interacted_with,
         jnp.logical_not(state.player_alive),
     )
 
-    damage_taken = jnp.zeros(static_params.player_count).at[player_interacting_with].add(
-        is_interacting_with_other_player * get_damage_between_players(state, player_interacting_with)
+    damage_taken = (
+        jnp.zeros(static_params.player_count)
+        .at[player_interacting_with]
+        .add(
+            is_interacting_with_other_player
+            * get_damage_between_players(state, player_interacting_with)
+        )
     )
     damage_taken *= env_params.friendly_fire
 
@@ -37,24 +51,18 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     )
     state = state.replace(
         player_health=new_player_health,
-        ff_damage_dealt=state.ff_damage_dealt+damage_taken.sum(),
+        ff_damage_dealt=state.ff_damage_dealt + damage_taken.sum(),
     )
     return state
 
+
 def update_plants_with_eat(state, plant_position, is_eating_plant):
-    is_plant = jax.vmap(
-        jnp.equal, in_axes=(0, None)
-    )(
-        plant_position, 
-        state.growing_plants_positions
+    is_plant = jax.vmap(jnp.equal, in_axes=(0, None))(
+        plant_position, state.growing_plants_positions
     ).all(axis=-1)
-    plant_index = jnp.argmax(
-        is_plant, axis=-1
-    )
+    plant_index = jnp.argmax(is_plant, axis=-1)
     selected_plant_age = jnp.where(
-        is_eating_plant,
-        0,
-        state.growing_plants_age[plant_index]
+        is_eating_plant, 0, state.growing_plants_age[plant_index]
     )
     return state.growing_plants_age.at[plant_index].set(selected_plant_age)
 
@@ -139,8 +147,7 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
     tool_id = jax.random.randint(_rng, shape=(), minval=0, maxval=2)
 
     is_looting_pickaxe = jnp.logical_and(
-        jnp.logical_and(is_looting_tool, tool_id == 0),
-        is_opening_chest
+        jnp.logical_and(is_looting_tool, tool_id == 0), is_opening_chest
     )
     rng, _rng = jax.random.split(rng)
     pickaxe_loot_level = (
@@ -182,7 +189,7 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
         jnp.logical_and(
             state.player_level == 1,
             jnp.logical_not(state.chests_opened[state.player_level]),
-        )
+        ),
     )
     new_bow_level = is_looting_bow * 1 + (1 - is_looting_bow) * inventory.bow
 
@@ -190,10 +197,7 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
         jnp.logical_not(state.chests_opened[state.player_level]),
         jnp.logical_or(state.player_level == 3, state.player_level == 4),
     )
-    is_looting_book = jnp.logical_and(
-        can_loot_book,
-        is_opening_chest
-    )
+    is_looting_book = jnp.logical_and(can_loot_book, is_opening_chest)
 
     # Update inventory
     return inventory.replace(
@@ -219,20 +223,24 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
 def do_action(rng, state, action, env_params, static_params):
 
     block_position = state.player_position + DIRECTIONS[state.player_direction]
-    equal_block_placement = (jnp.expand_dims(block_position, axis=1) == jnp.expand_dims(block_position, axis=0)).all(axis=2)
+    equal_block_placement = (
+        jnp.expand_dims(block_position, axis=1)
+        == jnp.expand_dims(block_position, axis=0)
+    ).all(axis=2)
 
     doing_action = jnp.logical_and(
-        in_bounds(block_position, static_params),
-        action == Action.DO.value
+        in_bounds(block_position, static_params), action == Action.DO.value
     )
 
     state, did_attack_mob, did_kill_mob = attack_mob(
         state, doing_action, block_position, get_player_damage_vector(state), True
     )
-    
+
     # Interact with other players (Damage/Revive)
-    state = interplayer_interaction(state, block_position, doing_action, env_params, static_params)
-    
+    state = interplayer_interaction(
+        state, block_position, doing_action, env_params, static_params
+    )
+
     # BLOCKS
     # Tree
     can_mine_tree = True
@@ -257,7 +265,7 @@ def do_action(rng, state, action, env_params, static_params):
             is_block_tree_type,
             can_mine_tree,
         ),
-        doing_action
+        doing_action,
     )
     tree_replacement_block = (
         is_block_tree * BlockType.GRASS.value
@@ -265,8 +273,7 @@ def do_action(rng, state, action, env_params, static_params):
         + is_block_ice_shrub * BlockType.ICE_GRASS.value
     )
     is_any_player_mining_tree = jnp.logical_and(
-        equal_block_placement,
-        is_mining_tree[:, None]
+        equal_block_placement, is_mining_tree[:, None]
     ).any(axis=0)
     mined_tree_block = jnp.where(
         is_any_player_mining_tree,
@@ -289,22 +296,20 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.STONE.value
     )
     is_mining_stone = jnp.logical_and(
-        jnp.logical_and(
-            is_block_stone,
-            can_mine_stone
-        ),
+        jnp.logical_and(is_block_stone, can_mine_stone),
         doing_action,
     )
     is_any_player_mining_stone = jnp.logical_and(
-        equal_block_placement,
-        is_mining_stone[:, None]
+        equal_block_placement, is_mining_stone[:, None]
     ).any(axis=0)
     mined_stone_block = jnp.where(
         is_any_player_mining_stone,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_stone_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_stone_block
+    )
     new_inventory = new_inventory.replace(
         stone=new_inventory.stone + 1 * is_mining_stone
     )
@@ -319,15 +324,16 @@ def do_action(rng, state, action, env_params, static_params):
         doing_action,
     )
     is_any_player_mining_furnace = jnp.logical_and(
-        equal_block_placement,
-        is_mining_furnace[:, None]
+        equal_block_placement, is_mining_furnace[:, None]
     ).any(axis=0)
     mined_furnace_block = jnp.where(
         is_any_player_mining_furnace,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_furnace_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_furnace_block
+    )
 
     # Crafting Bench
     is_block_crafting_table = (
@@ -339,8 +345,7 @@ def do_action(rng, state, action, env_params, static_params):
         doing_action,
     )
     is_any_player_mining_crafting_table = jnp.logical_and(
-        equal_block_placement,
-        is_mining_crafting_table[:, None]
+        equal_block_placement, is_mining_crafting_table[:, None]
     ).any(axis=0)
     mined_crafting_table_block = jnp.where(
         is_any_player_mining_crafting_table,
@@ -358,25 +363,21 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.COAL.value
     )
     is_mining_coal = jnp.logical_and(
-        jnp.logical_and(
-            is_block_coal,
-            can_mine_coal
-        ),
+        jnp.logical_and(is_block_coal, can_mine_coal),
         doing_action,
     )
     is_any_player_mining_coal = jnp.logical_and(
-        equal_block_placement,
-        is_mining_coal[:, None]
+        equal_block_placement, is_mining_coal[:, None]
     ).any(axis=0)
     mined_coal_block = jnp.where(
         is_any_player_mining_coal,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_coal_block)
-    new_inventory = new_inventory.replace(
-        coal=new_inventory.coal + 1 * is_mining_coal
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_coal_block
     )
+    new_inventory = new_inventory.replace(coal=new_inventory.coal + 1 * is_mining_coal)
 
     # Iron
     can_mine_iron = state.inventory.pickaxe >= 2
@@ -385,49 +386,43 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.IRON.value
     )
     is_mining_iron = jnp.logical_and(
-        jnp.logical_and(
-            is_block_iron,
-            can_mine_iron
-        ),
+        jnp.logical_and(is_block_iron, can_mine_iron),
         doing_action,
     )
     is_any_player_mining_iron = jnp.logical_and(
-        equal_block_placement,
-        is_mining_iron[:, None]
+        equal_block_placement, is_mining_iron[:, None]
     ).any(axis=0)
     mined_iron_block = jnp.where(
         is_any_player_mining_iron,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_iron_block)
-    new_inventory = new_inventory.replace(
-        iron=new_inventory.iron + 1 * is_mining_iron
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_iron_block
     )
+    new_inventory = new_inventory.replace(iron=new_inventory.iron + 1 * is_mining_iron)
 
-    # Diamond  
+    # Diamond
     can_mine_diamond = state.inventory.pickaxe >= 3
     is_block_diamond = (
         state.map[state.player_level, block_position[:, 0], block_position[:, 1]]
         == BlockType.DIAMOND.value
     )
     is_mining_diamond = jnp.logical_and(
-        jnp.logical_and(
-            is_block_diamond,
-            can_mine_diamond
-        ),
+        jnp.logical_and(is_block_diamond, can_mine_diamond),
         doing_action,
     )
     is_any_player_mining_diamond = jnp.logical_and(
-        equal_block_placement,
-        is_mining_diamond[:, None]
+        equal_block_placement, is_mining_diamond[:, None]
     ).any(axis=0)
     mined_diamond_block = jnp.where(
         is_any_player_mining_diamond,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_diamond_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_diamond_block
+    )
     new_inventory = new_inventory.replace(
         diamond=new_inventory.diamond + 1 * is_mining_diamond
     )
@@ -439,22 +434,20 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.SAPPHIRE.value
     )
     is_mining_sapphire = jnp.logical_and(
-        jnp.logical_and(
-            is_block_sapphire,
-            can_mine_sapphire
-        ),
+        jnp.logical_and(is_block_sapphire, can_mine_sapphire),
         doing_action,
     )
     is_any_player_mining_sapphire = jnp.logical_and(
-        equal_block_placement,
-        is_mining_sapphire[:, None]
+        equal_block_placement, is_mining_sapphire[:, None]
     ).any(axis=0)
     mined_sapphire_block = jnp.where(
         is_any_player_mining_sapphire,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_sapphire_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_sapphire_block
+    )
     new_inventory = new_inventory.replace(
         sapphire=new_inventory.sapphire + 1 * is_mining_sapphire
     )
@@ -466,25 +459,21 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.RUBY.value
     )
     is_mining_ruby = jnp.logical_and(
-        jnp.logical_and(
-            is_block_ruby,
-            can_mine_ruby
-        ),
+        jnp.logical_and(is_block_ruby, can_mine_ruby),
         doing_action,
     )
     is_any_player_mining_ruby = jnp.logical_and(
-        equal_block_placement,
-        is_mining_ruby[:, None]
+        equal_block_placement, is_mining_ruby[:, None]
     ).any(axis=0)
     mined_ruby_block = jnp.where(
         is_any_player_mining_ruby,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_ruby_block)
-    new_inventory = new_inventory.replace(
-        ruby=new_inventory.ruby + 1 * is_mining_ruby
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_ruby_block
     )
+    new_inventory = new_inventory.replace(ruby=new_inventory.ruby + 1 * is_mining_ruby)
 
     # Sapling
     rng, _rng = jax.random.split(rng)
@@ -521,11 +510,7 @@ def do_action(rng, state, action, env_params, static_params):
         jnp.minimum(get_max_drink(state), state.player_drink + 3),
         state.player_drink,
     )
-    new_thirst = jnp.where(
-        is_drinking_water, 
-        0.0, 
-        state.player_thirst
-    )
+    new_thirst = jnp.where(is_drinking_water, 0.0, state.player_thirst)
     new_achievements = state.achievements.at[:, Achievement.COLLECT_DRINK.value].set(
         jnp.logical_or(
             state.achievements[:, Achievement.COLLECT_DRINK.value], is_drinking_water
@@ -537,13 +522,9 @@ def do_action(rng, state, action, env_params, static_params):
         state.map[state.player_level, block_position[:, 0], block_position[:, 1]]
         == BlockType.RIPE_PLANT.value
     )
-    is_eating_plant = jnp.logical_and(
-        is_block_plant,
-        doing_action
-    )
+    is_eating_plant = jnp.logical_and(is_block_plant, doing_action)
     is_any_player_eating_plant = jnp.logical_and(
-        equal_block_placement,
-        is_eating_plant[:, None]
+        equal_block_placement, is_eating_plant[:, None]
     ).any(axis=0)
     new_plant = jnp.where(
         is_any_player_eating_plant,
@@ -558,9 +539,11 @@ def do_action(rng, state, action, env_params, static_params):
     )
     new_hunger = jnp.where(is_eating_plant, 0.0, state.player_hunger)
     new_achievements = new_achievements.at[:, Achievement.EAT_PLANT.value].set(
-        jnp.logical_or(new_achievements[:, Achievement.EAT_PLANT.value], is_eating_plant)
+        jnp.logical_or(
+            new_achievements[:, Achievement.EAT_PLANT.value], is_eating_plant
+        )
     )
-    
+
     new_growing_plants_age = update_plants_with_eat(
         state, block_position, is_any_player_eating_plant
     )
@@ -572,22 +555,20 @@ def do_action(rng, state, action, env_params, static_params):
         == BlockType.STALAGMITE.value
     )
     is_mining_stalagmite = jnp.logical_and(
-        jnp.logical_and(
-            is_block_stalagmite,
-            can_mine_stalagmite
-        ),
+        jnp.logical_and(is_block_stalagmite, can_mine_stalagmite),
         doing_action,
     )
     is_any_player_mining_stalagmite = jnp.logical_and(
-        equal_block_placement,
-        is_mining_stalagmite[:, None]
+        equal_block_placement, is_mining_stalagmite[:, None]
     ).any(axis=0)
     mined_stalagmite_block = jnp.where(
         is_any_player_mining_stalagmite,
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_stalagmite_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_stalagmite_block
+    )
     new_inventory = new_inventory.replace(
         stone=new_inventory.stone + 1 * is_mining_stalagmite
     )
@@ -602,8 +583,7 @@ def do_action(rng, state, action, env_params, static_params):
         doing_action,
     )
     is_any_player_opening_chest = jnp.logical_and(
-        equal_block_placement,
-        is_opening_chest[:, None]
+        equal_block_placement, is_opening_chest[:, None]
     ).any(axis=0)
 
     mined_chest_block = jnp.where(
@@ -611,7 +591,9 @@ def do_action(rng, state, action, env_params, static_params):
         BlockType.PATH.value,
         new_map[block_position[:, 0], block_position[:, 1]],
     )
-    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(mined_chest_block)
+    new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(
+        mined_chest_block
+    )
     rng, _rng = jax.random.split(rng)
     new_inventory = add_items_from_chest(_rng, state, new_inventory, is_opening_chest)
 
@@ -671,7 +653,9 @@ def do_action(rng, state, action, env_params, static_params):
 
 
 def do_crafting(state, actions, static_params):
-    is_at_crafting_table = is_near_block(state, BlockType.CRAFTING_TABLE.value, static_params)
+    is_at_crafting_table = is_near_block(
+        state, BlockType.CRAFTING_TABLE.value, static_params
+    )
     is_at_furnace = is_near_block(state, BlockType.FURNACE.value, static_params)
 
     new_achievements = state.achievements
@@ -865,14 +849,12 @@ def do_crafting(state, actions, static_params):
         iron=new_inventory.iron - 3 * is_crafting_iron_armour,
         coal=new_inventory.coal - 3 * is_crafting_iron_armour,
         armour=new_inventory.armour.at[
-            jnp.arange(0, len(new_inventory.armour)),
-            iron_armour_index_to_craft
+            jnp.arange(0, len(new_inventory.armour)), iron_armour_index_to_craft
         ].set(
             is_crafting_iron_armour * 1
             + (1 - is_crafting_iron_armour)
             * new_inventory.armour[
-                jnp.arange(0, len(new_inventory.armour)),
-                iron_armour_index_to_craft
+                jnp.arange(0, len(new_inventory.armour)), iron_armour_index_to_craft
             ]
         ),
     )
@@ -902,18 +884,18 @@ def do_crafting(state, actions, static_params):
     new_inventory = new_inventory.replace(
         diamond=new_inventory.diamond - 3 * is_crafting_diamond_armour,
         armour=new_inventory.armour.at[
-            jnp.arange(0, len(new_inventory.armour)),
-            diamond_armour_index_to_craft
+            jnp.arange(0, len(new_inventory.armour)), diamond_armour_index_to_craft
         ].set(
             is_crafting_diamond_armour * 2
             + (1 - is_crafting_diamond_armour)
             * new_inventory.armour[
-                jnp.arange(0, len(new_inventory.armour)),
-                diamond_armour_index_to_craft
+                jnp.arange(0, len(new_inventory.armour)), diamond_armour_index_to_craft
             ]
         ),
     )
-    new_achievements = new_achievements.at[:, Achievement.MAKE_DIAMOND_ARMOUR.value].set(
+    new_achievements = new_achievements.at[
+        :, Achievement.MAKE_DIAMOND_ARMOUR.value
+    ].set(
         jnp.logical_or(
             new_achievements[:, Achievement.MAKE_DIAMOND_ARMOUR.value],
             is_crafting_diamond_armour,
@@ -958,7 +940,13 @@ def do_crafting(state, actions, static_params):
     return state
 
 
-def add_new_growing_plant(growing_plant_positions, growing_plant_age, growing_plant_mask, position, is_placing_sapling):
+def add_new_growing_plant(
+    growing_plant_positions,
+    growing_plant_age,
+    growing_plant_mask,
+    position,
+    is_placing_sapling,
+):
     is_empty = jnp.logical_not(growing_plant_mask)
     plant_index = jnp.argmax(is_empty)
     is_an_empty_slot = is_empty.any()
@@ -979,12 +967,20 @@ def add_new_growing_plant(growing_plant_positions, growing_plant_age, growing_pl
         growing_plant_mask.at[plant_index].set(True),
         growing_plant_mask,
     )
-    return new_growing_plants_positions, new_growing_plants_age, new_growing_plants_mask, is_adding_plant
+    return (
+        new_growing_plants_positions,
+        new_growing_plants_age,
+        new_growing_plants_mask,
+        is_adding_plant,
+    )
 
 
 def place_block(state, action, static_params):
     placing_block_position = state.player_position + DIRECTIONS[state.player_direction]
-    equal_block_placement = (jnp.expand_dims(placing_block_position, axis=1) == jnp.expand_dims(placing_block_position, axis=0)).all(axis=2)
+    equal_block_placement = (
+        jnp.expand_dims(placing_block_position, axis=1)
+        == jnp.expand_dims(placing_block_position, axis=0)
+    ).all(axis=2)
 
     new_map = state.map[state.player_level]
     new_item_map = state.item_map[state.player_level]
@@ -994,10 +990,7 @@ def place_block(state, action, static_params):
     is_block_in_bounds = in_bounds(placing_block_position, static_params)
     is_placement_in_bounds_not_in_mobs = jnp.logical_and(
         is_block_in_bounds,
-        jnp.logical_not(jnp.logical_or(
-            is_block_in_other_player,
-            is_block_in_mob
-        ))
+        jnp.logical_not(jnp.logical_or(is_block_in_other_player, is_block_in_mob)),
     )
 
     # Crafting table
@@ -1007,7 +1000,7 @@ def place_block(state, action, static_params):
             jnp.logical_not(is_in_solid_block(new_map, placing_block_position)),
             new_item_map[placing_block_position[:, 0], placing_block_position[:, 1]]
             == ItemType.NONE.value,
-        )
+        ),
     )
     crafting_table_key_down = action == Action.PLACE_TABLE.value
     has_wood = state.inventory.wood >= 2
@@ -1016,31 +1009,26 @@ def place_block(state, action, static_params):
         jnp.logical_and(is_valid_placement, has_wood),
     )
     is_any_player_placing_crafting_table = jnp.logical_and(
-        equal_block_placement,
-        is_player_placing_crafting_table[:, None]
+        equal_block_placement, is_player_placing_crafting_table[:, None]
     ).any(axis=0)
 
     placed_crafting_table_block = jnp.where(
         is_any_player_placing_crafting_table,
         BlockType.CRAFTING_TABLE.value,
-        new_map[
-            placing_block_position[:, 0], placing_block_position[:, 1]
-        ],
+        new_map[placing_block_position[:, 0], placing_block_position[:, 1]],
     )
-    new_map = (
-        new_map
-        .at[placing_block_position[:, 0], placing_block_position[:, 1]]
-        .set(placed_crafting_table_block)
-    )
+    new_map = new_map.at[
+        placing_block_position[:, 0], placing_block_position[:, 1]
+    ].set(placed_crafting_table_block)
     new_inventory = state.inventory.replace(
         wood=state.inventory.wood - 2 * is_player_placing_crafting_table
     )
     new_achievements = state.achievements.at[:, Achievement.PLACE_TABLE.value].set(
         jnp.logical_or(
-            state.achievements[:, Achievement.PLACE_TABLE.value], is_player_placing_crafting_table
+            state.achievements[:, Achievement.PLACE_TABLE.value],
+            is_player_placing_crafting_table,
         )
     )
-
 
     # Furnace
     is_valid_placement = jnp.logical_and(
@@ -1049,35 +1037,33 @@ def place_block(state, action, static_params):
             jnp.logical_not(is_in_solid_block(new_map, placing_block_position)),
             new_item_map[placing_block_position[:, 0], placing_block_position[:, 1]]
             == ItemType.NONE.value,
-        )
+        ),
     )
 
     furnace_key_down = action == Action.PLACE_FURNACE.value
     has_stone = new_inventory.stone > 0
     is_player_placing_furnace = jnp.logical_and(
         furnace_key_down,
-        jnp.logical_and(
-            is_valid_placement, has_stone
-        ),
+        jnp.logical_and(is_valid_placement, has_stone),
     )
     is_any_player_placing_furnace = jnp.logical_and(
-        equal_block_placement,
-        is_player_placing_furnace[:, None]
+        equal_block_placement, is_player_placing_furnace[:, None]
     ).any(axis=0)
     placed_furnace_block = jnp.where(
         is_any_player_placing_furnace,
         BlockType.FURNACE.value,
         new_map[placing_block_position[:, 0], placing_block_position[:, 1]],
     )
-    new_map = new_map.at[placing_block_position[:, 0], placing_block_position[:, 1]].set(
-        placed_furnace_block
-    )
+    new_map = new_map.at[
+        placing_block_position[:, 0], placing_block_position[:, 1]
+    ].set(placed_furnace_block)
     new_inventory = new_inventory.replace(
         stone=new_inventory.stone - 1 * is_player_placing_furnace
     )
     new_achievements = new_achievements.at[:, Achievement.PLACE_FURNACE.value].set(
         jnp.logical_or(
-            new_achievements[:, Achievement.PLACE_FURNACE.value], is_player_placing_furnace
+            new_achievements[:, Achievement.PLACE_FURNACE.value],
+            is_player_placing_furnace,
         )
     )
 
@@ -1092,29 +1078,26 @@ def place_block(state, action, static_params):
     is_valid_placement = jnp.logical_and(
         is_valid_placement,
         jnp.logical_or(
-            new_map[
-                placing_block_position[:, 0], placing_block_position[:, 1]
-            ]
+            new_map[placing_block_position[:, 0], placing_block_position[:, 1]]
             == BlockType.WATER.value,
             jnp.logical_not(is_in_solid_block(new_map, placing_block_position)),
-        )
+        ),
     )
     is_player_placing_stone = jnp.logical_and(
         stone_key_down,
         jnp.logical_and(is_valid_placement, has_stone),
     )
     is_any_player_placing_stone = jnp.logical_and(
-        equal_block_placement,
-        is_player_placing_stone[:, None]
+        equal_block_placement, is_player_placing_stone[:, None]
     ).any(axis=0)
     placed_stone_block = jnp.where(
         is_any_player_placing_stone,
         BlockType.STONE.value,
         new_map[placing_block_position[:, 0], placing_block_position[:, 1]],
     )
-    new_map = new_map.at[placing_block_position[:, 0], placing_block_position[:, 1]].set(
-        placed_stone_block
-    )
+    new_map = new_map.at[
+        placing_block_position[:, 0], placing_block_position[:, 1]
+    ].set(placed_stone_block)
     new_inventory = new_inventory.replace(
         stone=new_inventory.stone - 1 * is_player_placing_stone
     )
@@ -1134,19 +1117,22 @@ def place_block(state, action, static_params):
 
         torch_key_down = action[player_index] == Action.PLACE_TORCH.value
         has_torch = new_inventory.torches[player_index] > 0
-        
+
         is_valid_placement = jnp.logical_and(
             CAN_PLACE_ITEM_MAPPING[
                 new_map[
-                    placing_block_position[player_index, 0], placing_block_position[player_index, 1]
+                    placing_block_position[player_index, 0],
+                    placing_block_position[player_index, 1],
                 ]
             ],
-            working_item_map[placing_block_position[player_index, 0], placing_block_position[player_index, 1]]
+            working_item_map[
+                placing_block_position[player_index, 0],
+                placing_block_position[player_index, 1],
+            ]
             == ItemType.NONE.value,
         )
         is_valid_placement = jnp.logical_and(
-            is_placement_in_bounds_not_in_mobs[player_index],
-            is_valid_placement
+            is_placement_in_bounds_not_in_mobs[player_index], is_valid_placement
         )
         is_player_placing_torch = jnp.logical_and(
             torch_key_down,
@@ -1155,10 +1141,14 @@ def place_block(state, action, static_params):
         placed_torch_item = jax.lax.select(
             is_player_placing_torch,
             ItemType.TORCH.value,
-            working_item_map[placing_block_position[player_index, 0], placing_block_position[player_index, 1]],
+            working_item_map[
+                placing_block_position[player_index, 0],
+                placing_block_position[player_index, 1],
+            ],
         )
         working_item_map = working_item_map.at[
-            placing_block_position[player_index, 0], placing_block_position[player_index, 1]
+            placing_block_position[player_index, 0],
+            placing_block_position[player_index, 1],
         ].set(placed_torch_item)
 
         current_light_map = jax.lax.dynamic_slice(
@@ -1169,8 +1159,9 @@ def place_block(state, action, static_params):
             (9, 9),
         )
         torch_light_map = jnp.clip(TORCH_LIGHT_MAP + current_light_map, 0.0, 1.0)
-        torch_light_map = torch_light_map * is_player_placing_torch + current_light_map * (
-            1 - is_player_placing_torch
+        torch_light_map = (
+            torch_light_map * is_player_placing_torch
+            + current_light_map * (1 - is_player_placing_torch)
         )
         working_padded_light_map = jax.lax.dynamic_update_slice(
             working_padded_light_map,
@@ -1180,7 +1171,7 @@ def place_block(state, action, static_params):
             + jnp.array([light_map_padding, light_map_padding]),
         )
         return (working_item_map, working_padded_light_map), is_player_placing_torch
-    
+
     light_map_padding = 6
     padded_light_map_floor = jnp.pad(
         state.light_map[state.player_level],
@@ -1190,7 +1181,7 @@ def place_block(state, action, static_params):
     (new_item_map, padded_light_map_floor), is_player_placing_torch = jax.lax.scan(
         _player_place_torch,
         (new_item_map, padded_light_map_floor),
-        jnp.arange(static_params.player_count)
+        jnp.arange(static_params.player_count),
     )
     new_light_map_floor = padded_light_map_floor[
         light_map_padding:-light_map_padding, light_map_padding:-light_map_padding
@@ -1206,12 +1197,11 @@ def place_block(state, action, static_params):
         )
     )
 
-
     # Plant
     # TODO: Make more parallelized
     def _player_place_plant(action_info, player_index):
         (
-            working_map, 
+            working_map,
             working_growing_plants_positions,
             working_growing_plants_age,
             working_growing_plants_mask,
@@ -1221,39 +1211,49 @@ def place_block(state, action, static_params):
         is_valid_placement = jnp.logical_and(
             is_placement_in_bounds_not_in_mobs[player_index],
             jnp.logical_and(
-                working_map[placing_block_position[player_index, 0], placing_block_position[player_index, 1]]
+                working_map[
+                    placing_block_position[player_index, 0],
+                    placing_block_position[player_index, 1],
+                ]
                 == BlockType.GRASS.value,
-                new_item_map[placing_block_position[player_index, 0], placing_block_position[player_index, 1]]
+                new_item_map[
+                    placing_block_position[player_index, 0],
+                    placing_block_position[player_index, 1],
+                ]
                 == ItemType.NONE.value,
-            )
+            ),
         )
         is_player_placing_sapling = jnp.logical_and(
             is_valid_placement,
             jnp.logical_and(
                 sapling_key_down,
                 has_sapling,
-            )
+            ),
         )
         (
             working_growing_plants_positions,
             working_growing_plants_age,
             working_growing_plants_mask,
-            is_player_placing_sapling
+            is_player_placing_sapling,
         ) = add_new_growing_plant(
             working_growing_plants_positions,
             working_growing_plants_age,
             working_growing_plants_mask,
-            placing_block_position[player_index], 
+            placing_block_position[player_index],
             is_player_placing_sapling,
         )
         placed_sapling_block = jax.lax.select(
             is_player_placing_sapling,
             BlockType.PLANT.value,
-            working_map[placing_block_position[player_index, 0], placing_block_position[player_index, 1]],
+            working_map[
+                placing_block_position[player_index, 0],
+                placing_block_position[player_index, 1],
+            ],
         )
-        working_map = working_map.at[placing_block_position[player_index, 0], placing_block_position[player_index, 1]].set(
-            placed_sapling_block
-        )
+        working_map = working_map.at[
+            placing_block_position[player_index, 0],
+            placing_block_position[player_index, 1],
+        ].set(placed_sapling_block)
         return (
             working_map,
             working_growing_plants_positions,
@@ -1261,10 +1261,20 @@ def place_block(state, action, static_params):
             working_growing_plants_mask,
         ), is_player_placing_sapling
 
-    (new_map, new_growing_plants_positions, new_growing_plants_age, new_growing_plants_mask), is_player_placing_sapling = jax.lax.scan(
+    (
+        new_map,
+        new_growing_plants_positions,
+        new_growing_plants_age,
+        new_growing_plants_mask,
+    ), is_player_placing_sapling = jax.lax.scan(
         _player_place_plant,
-        (new_map, state.growing_plants_positions, state.growing_plants_age, state.growing_plants_mask),
-        jnp.arange(static_params.player_count)
+        (
+            new_map,
+            state.growing_plants_positions,
+            state.growing_plants_age,
+            state.growing_plants_mask,
+        ),
+        jnp.arange(static_params.player_count),
     )
 
     new_inventory = new_inventory.replace(
@@ -1272,7 +1282,8 @@ def place_block(state, action, static_params):
     )
     new_achievements = new_achievements.at[:, Achievement.PLACE_PLANT.value].set(
         jnp.logical_or(
-            new_achievements[:, Achievement.PLACE_PLANT.value], is_player_placing_sapling
+            new_achievements[:, Achievement.PLACE_PLANT.value],
+            is_player_placing_sapling,
         )
     )
 
@@ -1303,13 +1314,11 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Random move
         rng, _rng = jax.random.split(rng)
         valid_random_moves = in_bounds(
-            DIRECTIONS[1:5] + melee_mobs.position[state.player_level, melee_mob_index], 
-            static_params
+            DIRECTIONS[1:5] + melee_mobs.position[state.player_level, melee_mob_index],
+            static_params,
         )
         random_move_direction = jax.random.choice(
-            _rng,
-            DIRECTIONS[1:5],
-            p=valid_random_moves
+            _rng, DIRECTIONS[1:5], p=valid_random_moves
         )
         random_move_proposed_position = (
             melee_mobs.position[state.player_level, melee_mob_index]
@@ -1323,11 +1332,9 @@ def update_mobs(rng, state, params, env_params, static_params):
             - melee_mobs.position[state.player_level, melee_mob_index]
         )
         distance_to_players = all_players_move_direction_abs.sum(axis=1)
-        player_targetted = jnp.argmin(jnp.where(
-            state.player_alive,
-            distance_to_players,
-            jnp.inf
-        ))
+        player_targetted = jnp.argmin(
+            jnp.where(state.player_alive, distance_to_players, jnp.inf)
+        )
         player_move_direction_abs = all_players_move_direction_abs[player_targetted]
 
         player_move_direction_index_p = (
@@ -1345,7 +1352,9 @@ def update_mobs(rng, state, params, env_params, static_params):
         ].set(
             jnp.sign(
                 state.player_position[player_targetted, player_move_direction_index]
-                - melee_mobs.position[state.player_level, melee_mob_index, player_move_direction_index]
+                - melee_mobs.position[
+                    state.player_level, melee_mob_index, player_move_direction_index
+                ]
             ).astype(jnp.int32)
         )
         player_move_proposed_position = (
@@ -1355,10 +1364,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         # Choose movement
         close_to_player = distance_to_players < 10
-        close_to_player = jnp.logical_and(
-            close_to_player,
-            state.player_alive
-        ).any()
+        close_to_player = jnp.logical_and(close_to_player, state.player_alive).any()
         close_to_player = jnp.logical_or(
             close_to_player, is_fighting_boss(state, static_params)
         )
@@ -1374,10 +1380,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         # Choose attack or not
         is_attacking_player = distance_to_players == 1
-        is_attacking_player = jnp.logical_and(
-            is_attacking_player,
-            state.player_alive
-        )
+        is_attacking_player = jnp.logical_and(is_attacking_player, state.player_alive)
         is_attacking_player = jnp.logical_and(
             is_attacking_player,
             melee_mobs.attack_cooldown[state.player_level, melee_mob_index] <= 0,
@@ -1397,7 +1400,9 @@ def update_mobs(rng, state, params, env_params, static_params):
         ]
 
         melee_mob_damage = get_damage_done_to_player(
-            state, static_params, melee_mob_base_damage * (1 + 2.5 * state.is_sleeping[:, None])
+            state,
+            static_params,
+            melee_mob_base_damage * (1 + 2.5 * state.is_sleeping[:, None]),
         )
 
         new_cooldown = jnp.where(
@@ -1429,12 +1434,8 @@ def update_mobs(rng, state, params, env_params, static_params):
             state, proposed_position[None, :], collision_map, static_params
         )[0]
         in_other_player = is_in_other_player(state, proposed_position[None, :])[0]
-        valid_move = jnp.logical_and(
-            valid_move,
-            jnp.logical_not(in_other_player)
-        )
+        valid_move = jnp.logical_and(valid_move, jnp.logical_not(in_other_player))
 
-        
         position = jax.lax.select(
             valid_move,
             proposed_position,
@@ -1443,8 +1444,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         should_not_despawn = distance_to_players < params.mob_despawn_distance
         should_not_despawn = jnp.logical_and(
-            should_not_despawn,
-            state.player_alive
+            should_not_despawn, state.player_alive
         ).any()
         should_not_despawn = jnp.logical_or(
             should_not_despawn, is_fighting_boss(state, static_params)
@@ -1497,7 +1497,9 @@ def update_mobs(rng, state, params, env_params, static_params):
 
     rng, _rng = jax.random.split(rng)
     (rng, state), _ = jax.lax.scan(
-        _move_melee_mob, (rng, state), jnp.arange(static_params.max_melee_mobs * static_params.player_count)
+        _move_melee_mob,
+        (rng, state),
+        jnp.arange(static_params.max_melee_mobs * static_params.player_count),
     )
 
     # Move passive_mobs
@@ -1508,13 +1510,12 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Random move
         rng, _rng = jax.random.split(rng)
         valid_random_moves = in_bounds(
-            DIRECTIONS[1:9] + passive_mobs.position[state.player_level, passive_mob_index], 
-            static_params
+            DIRECTIONS[1:9]
+            + passive_mobs.position[state.player_level, passive_mob_index],
+            static_params,
         )
         random_move_direction = jax.random.choice(
-            _rng,
-            DIRECTIONS[1:9],  # 50% chance of not moving
-            p=valid_random_moves
+            _rng, DIRECTIONS[1:9], p=valid_random_moves  # 50% chance of not moving
         )
         proposed_position = (
             passive_mobs.position[state.player_level, passive_mob_index]
@@ -1527,10 +1528,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             state, proposed_position[None, :], collision_map, static_params
         )[0]
         in_other_player = is_in_other_player(state, proposed_position[None, :])[0]
-        valid_move = jnp.logical_and(
-            valid_move,
-            jnp.logical_not(in_other_player)
-        )
+        valid_move = jnp.logical_and(valid_move, jnp.logical_not(in_other_player))
         position = jax.lax.select(
             valid_move,
             proposed_position,
@@ -1542,8 +1540,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             - passive_mobs.position[state.player_level, passive_mob_index]
         ).sum(axis=1)
         should_not_despawn = jnp.logical_and(
-            distance_to_players < params.mob_despawn_distance,
-            state.player_alive
+            distance_to_players < params.mob_despawn_distance, state.player_alive
         ).any()
 
         # Clear our old entry if we are alive
@@ -1599,7 +1596,9 @@ def update_mobs(rng, state, params, env_params, static_params):
 
     rng, _rng = jax.random.split(rng)
     (rng, state), _ = jax.lax.scan(
-        _move_passive_mob, (rng, state), jnp.arange(static_params.max_passive_mobs * static_params.player_count)
+        _move_passive_mob,
+        (rng, state),
+        jnp.arange(static_params.max_passive_mobs * static_params.player_count),
     )
 
     # Move ranged_mobs
@@ -1611,13 +1610,12 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Random move
         rng, _rng = jax.random.split(rng)
         valid_random_moves = in_bounds(
-            DIRECTIONS[1:5] + ranged_mobs.position[state.player_level, ranged_mob_index], 
-            static_params
+            DIRECTIONS[1:5]
+            + ranged_mobs.position[state.player_level, ranged_mob_index],
+            static_params,
         )
         random_move_direction = jax.random.choice(
-            _rng,
-            DIRECTIONS[1:5],
-            p=valid_random_moves
+            _rng, DIRECTIONS[1:5], p=valid_random_moves
         )
         random_move_proposed_position = (
             ranged_mobs.position[state.player_level, ranged_mob_index]
@@ -1631,11 +1629,9 @@ def update_mobs(rng, state, params, env_params, static_params):
             - ranged_mobs.position[state.player_level, ranged_mob_index]
         )
         distance_to_players = all_players_move_direction_abs.sum(axis=1)
-        player_targetted = jnp.argmin(jnp.where(
-            state.player_alive,
-            distance_to_players,
-            jnp.inf
-        ))
+        player_targetted = jnp.argmin(
+            jnp.where(state.player_alive, distance_to_players, jnp.inf)
+        )
         player_move_direction_abs = all_players_move_direction_abs[player_targetted]
         player_move_direction_index_p = (
             player_move_direction_abs == player_move_direction_abs.max()
@@ -1652,7 +1648,9 @@ def update_mobs(rng, state, params, env_params, static_params):
         ].set(
             jnp.sign(
                 state.player_position[player_targetted, player_move_direction_index]
-                - ranged_mobs.position[state.player_level, ranged_mob_index, player_move_direction_index]
+                - ranged_mobs.position[
+                    state.player_level, ranged_mob_index, player_move_direction_index
+                ]
             ).astype(jnp.int32)
         )
         player_move_towards_proposed_position = (
@@ -1666,7 +1664,9 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         # Choose movement
         far_from_player = player_move_direction_abs[player_move_direction_index] >= 6
-        too_close_to_player = player_move_direction_abs[player_move_direction_index] <= 3
+        too_close_to_player = (
+            player_move_direction_abs[player_move_direction_index] <= 3
+        )
 
         proposed_position = jax.lax.select(
             far_from_player,
@@ -1710,7 +1710,11 @@ def update_mobs(rng, state, params, env_params, static_params):
             is_attacking_player, can_spawn_projectile
         )
 
-        new_mob_projectiles, new_mob_projectile_directions, new_mob_projectile_owners = spawn_projectile(
+        (
+            new_mob_projectiles,
+            new_mob_projectile_directions,
+            new_mob_projectile_owners,
+        ) = spawn_projectile(
             state,
             static_params,
             state.mob_projectiles,
@@ -1749,10 +1753,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             state, proposed_position[None, :], collision_map, static_params
         )[0]
         in_other_player = is_in_other_player(state, proposed_position[None, :])[0]
-        valid_move = jnp.logical_and(
-            valid_move,
-            jnp.logical_not(in_other_player)
-        )
+        valid_move = jnp.logical_and(valid_move, jnp.logical_not(in_other_player))
 
         position = jax.lax.select(
             valid_move,
@@ -1762,8 +1763,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         should_not_despawn = distance_to_players < params.mob_despawn_distance
         should_not_despawn = jnp.logical_and(
-            should_not_despawn,
-            state.player_alive
+            should_not_despawn, state.player_alive
         ).any()
         should_not_despawn = jnp.logical_or(
             should_not_despawn, is_fighting_boss(state, static_params)
@@ -1819,7 +1819,9 @@ def update_mobs(rng, state, params, env_params, static_params):
 
     rng, _rng = jax.random.split(rng)
     (rng, state), _ = jax.lax.scan(
-        _move_ranged_mob, (rng, state), jnp.arange(static_params.max_ranged_mobs * static_params.player_count)
+        _move_ranged_mob,
+        (rng, state),
+        jnp.arange(static_params.max_ranged_mobs * static_params.player_count),
     )
 
     # Move projectiles
@@ -1832,9 +1834,12 @@ def update_mobs(rng, state, params, env_params, static_params):
             + state.mob_projectile_directions[state.player_level, projectile_index]
         )
 
-
-        proposed_position_in_bounds = in_bounds(proposed_position[None, :], static_params)[0]
-        in_wall = is_in_solid_block(state.map[state.player_level], proposed_position[None, :])[0]
+        proposed_position_in_bounds = in_bounds(
+            proposed_position[None, :], static_params
+        )[0]
+        in_wall = is_in_solid_block(
+            state.map[state.player_level], proposed_position[None, :]
+        )[0]
         in_wall = jnp.logical_and(
             in_wall,
             jnp.logical_not(
@@ -1859,7 +1864,9 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectiles.mask[state.player_level, projectile_index],
         )
 
-        proposed_position_in_player = (proposed_position == state.player_position).all(axis=1)
+        proposed_position_in_player = (proposed_position == state.player_position).all(
+            axis=1
+        )
         hit_player1 = jnp.logical_and(
             proposed_position_in_player,
             projectiles.mask[state.player_level, projectile_index],
@@ -1867,7 +1874,9 @@ def update_mobs(rng, state, params, env_params, static_params):
         hit_player = jnp.logical_or(hit_player0, hit_player1)
         hit_player = jnp.logical_and(hit_player, state.player_alive)
 
-        continue_move = jnp.logical_and(continue_move, jnp.logical_not(hit_player.any()))
+        continue_move = jnp.logical_and(
+            continue_move, jnp.logical_not(hit_player.any())
+        )
 
         position = proposed_position
 
@@ -1951,9 +1960,9 @@ def update_mobs(rng, state, params, env_params, static_params):
 
         # Bow enchantment
         arrow_damage_add = jnp.zeros(3, dtype=jnp.float32)
-        arrow_damage_add = arrow_damage_add.at[state.bow_enchantment[projectile_owner]].set(
-            projectile_damage_vector[0] / 2
-        )
+        arrow_damage_add = arrow_damage_add.at[
+            state.bow_enchantment[projectile_owner]
+        ].set(projectile_damage_vector[0] / 2)
         arrow_damage_add = arrow_damage_add.at[0].set(0)
 
         projectile_damage_vector += jax.lax.select(
@@ -1982,9 +1991,13 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectiles.position[state.player_level, projectile_index]
             + state.player_projectile_directions[state.player_level, projectile_index]
         )
-        
-        proposed_position_in_bounds = in_bounds(proposed_position[None, :], static_params)[0]
-        in_wall = is_in_solid_block(state.map[state.player_level], proposed_position[None, :])[0]
+
+        proposed_position_in_bounds = in_bounds(
+            proposed_position[None, :], static_params
+        )[0]
+        in_wall = is_in_solid_block(
+            state.map[state.player_level], proposed_position[None, :]
+        )[0]
         in_wall = jnp.logical_and(
             in_wall,
             jnp.logical_not(
@@ -1998,14 +2011,22 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Check if we hit a player
         deal_damage = projectiles.mask[state.player_level, projectile_index]
 
-        per_player_contact = (state.player_position == proposed_position[None, :]).all(axis=-1)
-        did_attack_player = per_player_contact.any()    
+        per_player_contact = (state.player_position == proposed_position[None, :]).all(
+            axis=-1
+        )
+        did_attack_player = per_player_contact.any()
         player_attack_index = jnp.argmax(per_player_contact)
 
         player_defense_vector = get_player_defense_vector(state)[player_attack_index]
-        player_damage_dealt = get_damage(projectile_damage_vector, player_defense_vector) * did_attack_player * env_params.friendly_fire
-        new_player_health = state.player_health.at[player_attack_index].subtract(player_damage_dealt)
-        
+        player_damage_dealt = (
+            get_damage(projectile_damage_vector, player_defense_vector)
+            * did_attack_player
+            * env_params.friendly_fire
+        )
+        new_player_health = state.player_health.at[player_attack_index].subtract(
+            player_damage_dealt
+        )
+
         state, did_attack_mob0, did_kill_mob0 = attack_mob(
             state,
             deal_damage,
@@ -2024,7 +2045,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             deal_damage,
             proposed_position[None, :],
             projectile_damage_vector[None, :],
-            jnp.array([False])
+            jnp.array([False]),
         )
         did_attack_mob1 = did_attack_mob1[0]
 
@@ -2085,7 +2106,9 @@ def update_player_intrinsics(state, action, static_params):
     )
     state = state.replace(
         is_sleeping=jnp.where(state.player_alive, new_is_sleeping, state.is_sleeping),
-        achievements=jnp.where(state.player_alive[:, None], new_achievements, state.achievements),
+        achievements=jnp.where(
+            state.player_alive[:, None], new_achievements, state.achievements
+        ),
     )
 
     # Start resting?
@@ -2113,20 +2136,19 @@ def update_player_intrinsics(state, action, static_params):
     intrinsic_decay_coeff = 1.0 - (0.125 * (state.player_dexterity - 1))
 
     # Hunger
-    hunger_add = jnp.where(
-        state.is_sleeping, 
-        0.5, 
-        1.0,
-    ) * intrinsic_decay_coeff
+    hunger_add = (
+        jnp.where(
+            state.is_sleeping,
+            0.5,
+            1.0,
+        )
+        * intrinsic_decay_coeff
+    )
     new_hunger = state.player_hunger + hunger_add
 
     hungered_food = jnp.maximum(state.player_food - 1 * not_boss, 0)
     new_food = jnp.where(new_hunger > 25, hungered_food, state.player_food)
-    new_hunger = jnp.where(
-        new_hunger > 25, 
-        0.0, 
-        new_hunger
-    )
+    new_hunger = jnp.where(new_hunger > 25, 0.0, new_hunger)
 
     state = state.replace(
         player_hunger=jnp.where(state.player_alive, new_hunger, state.player_hunger),
@@ -2134,19 +2156,18 @@ def update_player_intrinsics(state, action, static_params):
     )
 
     # Thirst
-    thirst_add = jnp.where(
-        state.is_sleeping, 
-        0.5, 
-        1.0,
-    ) * intrinsic_decay_coeff
+    thirst_add = (
+        jnp.where(
+            state.is_sleeping,
+            0.5,
+            1.0,
+        )
+        * intrinsic_decay_coeff
+    )
     new_thirst = state.player_thirst + thirst_add
     thirsted_drink = jnp.maximum(state.player_drink - 1 * not_boss, 0)
     new_drink = jnp.where(new_thirst > 20, thirsted_drink, state.player_drink)
-    new_thirst = jnp.where(
-        new_thirst > 20, 
-        0.0, 
-        new_thirst
-    )
+    new_thirst = jnp.where(new_thirst > 20, 0.0, new_thirst)
 
     state = state.replace(
         player_thirst=jnp.where(state.player_alive, new_thirst, state.player_thirst),
@@ -2165,22 +2186,14 @@ def update_player_intrinsics(state, action, static_params):
         jnp.maximum(state.player_energy - 1 * not_boss, 0),
         state.player_energy,
     )
-    new_fatigue = jnp.where(
-        new_fatigue > 30, 
-        0.0, 
-        new_fatigue
-    )
+    new_fatigue = jnp.where(new_fatigue > 30, 0.0, new_fatigue)
 
     new_energy = jnp.where(
         new_fatigue < -10,
         jnp.minimum(state.player_energy + 1, get_max_energy(state)),
         new_energy,
     )
-    new_fatigue = jnp.where(
-        new_fatigue < -10, 
-        0.0, 
-        new_fatigue
-    )
+    new_fatigue = jnp.where(new_fatigue < -10, 0.0, new_fatigue)
 
     state = state.replace(
         player_fatigue=jnp.where(state.player_alive, new_fatigue, state.player_fatigue),
@@ -2192,26 +2205,34 @@ def update_player_intrinsics(state, action, static_params):
         [
             state.player_food > 0,
             state.player_drink > 0,
-            jnp.logical_or(state.player_energy > 0, state.is_sleeping)
+            jnp.logical_or(state.player_energy > 0, state.is_sleeping),
         ],
-        axis=1
+        axis=1,
     )
 
     all_necessities = necessities.all(axis=1)
     # all_necessities = jnp.full((static_params.player_count,), True, dtype=bool)
 
-    new_all_necessities_frac = (state.all_necessities_frac * state.timestep + all_necessities)/(state.timestep+1)
+    new_all_necessities_frac = (
+        state.all_necessities_frac * state.timestep + all_necessities
+    ) / (state.timestep + 1)
 
-    recover_all = jnp.where(
-        state.is_sleeping, 
-        2.0, 
-        1.0,
-    ) * 2.0
-    recover_not_all = jnp.where(
-        state.is_sleeping, 
-        -0.5, 
-        -1.0,
-    ) * not_boss
+    recover_all = (
+        jnp.where(
+            state.is_sleeping,
+            2.0,
+            1.0,
+        )
+        * 2.0
+    )
+    recover_not_all = (
+        jnp.where(
+            state.is_sleeping,
+            -0.5,
+            -1.0,
+        )
+        * not_boss
+    )
     recover_add = jnp.where(all_necessities, recover_all, recover_not_all)
 
     new_recover = state.player_recover + recover_add
@@ -2220,17 +2241,9 @@ def update_player_intrinsics(state, action, static_params):
     derecovered_health = state.player_health - 1
 
     new_health = jnp.where(new_recover > 25, recovered_health, state.player_health)
-    new_recover = jnp.where(
-        new_recover > 25, 
-        0.0, 
-        new_recover
-    )
+    new_recover = jnp.where(new_recover > 25, 0.0, new_recover)
     new_health = jnp.where(new_recover < -15, derecovered_health, new_health)
-    new_recover = jnp.where(
-        new_recover < -15, 
-        0.0, 
-        new_recover
-    )
+    new_recover = jnp.where(new_recover < -15, 0.0, new_recover)
 
     state = state.replace(
         player_recover=jnp.where(state.player_alive, new_recover, state.player_recover),
@@ -2251,16 +2264,14 @@ def update_player_intrinsics(state, action, static_params):
     new_mana = jnp.where(
         new_recover_mana > 30, state.player_mana + 1, state.player_mana
     )
-    new_recover_mana = jnp.where(
-        new_recover_mana > 30, 
-        0.0, 
-        new_recover_mana
-    )
+    new_recover_mana = jnp.where(new_recover_mana > 30, 0.0, new_recover_mana)
 
     state = state.replace(
-        player_recover_mana=jnp.where(state.player_alive, new_recover_mana, state.player_recover_mana),
+        player_recover_mana=jnp.where(
+            state.player_alive, new_recover_mana, state.player_recover_mana
+        ),
         player_mana=jnp.where(state.player_alive, new_mana, state.player_mana),
-        all_necessities_frac=new_all_necessities_frac
+        all_necessities_frac=new_all_necessities_frac,
     )
 
     return state
@@ -2314,11 +2325,16 @@ def move_player(state, actions, params, static_params):
 
     valid_move = is_position_in_bounds_not_in_mob_not_colliding(
         state, proposed_position, COLLISION_LAND_CREATURE, static_params
-    ) 
-    valid_move = jnp.logical_and(valid_move, is_position_not_colliding_other_player(state, proposed_position))
+    )
+    valid_move = jnp.logical_and(
+        valid_move, is_position_not_colliding_other_player(state, proposed_position)
+    )
     valid_move = jnp.logical_or(valid_move, params.god_mode)
 
-    position = state.player_position + jnp.expand_dims(valid_move, axis=1).astype(jnp.int32) * DIRECTIONS[actions]
+    position = (
+        state.player_position
+        + jnp.expand_dims(valid_move, axis=1).astype(jnp.int32) * DIRECTIONS[actions]
+    )
 
     is_new_direction = jnp.sum(jnp.abs(DIRECTIONS[actions]), axis=1) != 0
     new_direction = (
@@ -2490,14 +2506,12 @@ def spawn_mobs(state, rng, params, static_params):
     )
 
     # Melee mobs
-    can_spawn_melee_mob = (
-        state.melee_mobs.mask[state.player_level].sum() < 
-        (
-            static_params.max_melee_mobs * 
-            (
-                static_params.player_count * (1 - in_dungeon) + 
-                1 * in_dungeon # reduce number of mobs if in dungeons to avoid crowdedness
-            )
+    can_spawn_melee_mob = state.melee_mobs.mask[state.player_level].sum() < (
+        static_params.max_melee_mobs
+        * (
+            static_params.player_count * (1 - in_dungeon)
+            + 1
+            * in_dungeon  # reduce number of mobs if in dungeons to avoid crowdedness
         )
     )
 
@@ -2613,14 +2627,12 @@ def spawn_mobs(state, rng, params, static_params):
     )
 
     # Ranged mobs
-    can_spawn_ranged_mob = (
-        state.ranged_mobs.mask[state.player_level].sum() <
-        (
-            static_params.max_ranged_mobs * 
-            (
-                static_params.player_count * (1 - in_dungeon) + 
-                1 * in_dungeon # reduce number of mobs if in dungeons to avoid crowdedness
-            )
+    can_spawn_ranged_mob = state.ranged_mobs.mask[state.player_level].sum() < (
+        static_params.max_ranged_mobs
+        * (
+            static_params.player_count * (1 - in_dungeon)
+            + 1
+            * in_dungeon  # reduce number of mobs if in dungeons to avoid crowdedness
         )
     )
 
@@ -2750,16 +2762,18 @@ def change_floor(
             env_params.god_mode,
             jnp.logical_and(
                 state.item_map[
-                    state.player_level, state.player_position[:, 0], state.player_position[:, 1]
+                    state.player_level,
+                    state.player_position[:, 0],
+                    state.player_position[:, 1],
                 ]
                 == ItemType.LADDER_DOWN.value,
-                state.monsters_killed[state.player_level] >= MONSTERS_KILLED_TO_CLEAR_LEVEL
-            )
-        )
+                state.monsters_killed[state.player_level]
+                >= MONSTERS_KILLED_TO_CLEAR_LEVEL,
+            ),
+        ),
     )
     is_moving_down = jnp.logical_and(
-        is_moving_down,
-        state.player_level < static_params.num_levels - 1
+        is_moving_down, state.player_level < static_params.num_levels - 1
     )
     is_moving_down = is_moving_down.any()
 
@@ -2770,25 +2784,26 @@ def change_floor(
         jnp.logical_or(
             env_params.god_mode,
             state.item_map[
-                state.player_level, state.player_position[:, 0], state.player_position[:, 1]
+                state.player_level,
+                state.player_position[:, 0],
+                state.player_position[:, 1],
             ]
-            == ItemType.LADDER_UP.value
-        )
+            == ItemType.LADDER_UP.value,
+        ),
     )
-    is_moving_up = jnp.logical_and(
-        is_moving_up,
-        state.player_level > 0
-    )
+    is_moving_up = jnp.logical_and(is_moving_up, state.player_level > 0)
     is_moving_up = is_moving_up.any()
-    
+
     moving_up_position = state.down_ladders[state.player_level - 1]
-        
+
     # prioritizes moving players down levels if two players are conflicted
-    position = jax.lax.select(is_moving_down, moving_down_position,
-                              jax.lax.select(is_moving_up, moving_up_position, state.player_position))
-    delta_floor = jax.lax.select(is_moving_down, 1,
-                                 jax.lax.select(is_moving_up, -1, 0))
-    
+    position = jax.lax.select(
+        is_moving_down,
+        moving_down_position,
+        jax.lax.select(is_moving_up, moving_up_position, state.player_position),
+    )
+    delta_floor = jax.lax.select(is_moving_down, 1, jax.lax.select(is_moving_up, -1, 0))
+
     move_down_achievement = LEVEL_ACHIEVEMENT_MAP[state.player_level + delta_floor]
 
     new_achievements = state.achievements.at[:, move_down_achievement].set(
@@ -2816,7 +2831,9 @@ def change_floor(
 def shoot_projectile(state: EnvState, action: int, static_params: StaticEnvParams):
     # Arrow
     def _spawn_player_projectiles(projectile_info, player_index):
-        player_projectiles, player_projectile_directions, player_projectile_owners = projectile_info
+        player_projectiles, player_projectile_directions, player_projectile_owners = (
+            projectile_info
+        )
 
         is_shooting_arrow = jnp.logical_and(
             action[player_index] == Action.SHOOT_ARROW.value,
@@ -2825,29 +2842,48 @@ def shoot_projectile(state: EnvState, action: int, static_params: StaticEnvParam
                 jnp.logical_and(
                     state.inventory.arrows[player_index] >= 1,
                     player_projectiles.mask[state.player_level].sum()
-                    < (static_params.max_player_projectiles * static_params.player_count),
+                    < (
+                        static_params.max_player_projectiles
+                        * static_params.player_count
+                    ),
                 ),
             ),
         )
 
-        new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners = spawn_projectile(
-            state, 
-            static_params, 
-            player_projectiles, 
-            player_projectile_directions, 
+        (
+            new_player_projectiles,
+            new_player_projectile_directions,
+            new_player_projectile_owners,
+        ) = spawn_projectile(
+            state,
+            static_params,
+            player_projectiles,
+            player_projectile_directions,
             player_projectile_owners,
-            state.player_position[player_index], 
+            state.player_position[player_index],
             is_shooting_arrow,
             player_index,
             DIRECTIONS[state.player_direction[player_index]],
             ProjectileType.ARROW2.value,
         )
 
-        return (new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners), is_shooting_arrow
+        return (
+            new_player_projectiles,
+            new_player_projectile_directions,
+            new_player_projectile_owners,
+        ), is_shooting_arrow
 
-    (new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners), is_shooting_arrow = jax.lax.scan(
-        _spawn_player_projectiles, 
-        (state.player_projectiles, state.player_projectile_directions, state.player_projectile_owners),
+    (
+        new_player_projectiles,
+        new_player_projectile_directions,
+        new_player_projectile_owners,
+    ), is_shooting_arrow = jax.lax.scan(
+        _spawn_player_projectiles,
+        (
+            state.player_projectiles,
+            state.player_projectile_directions,
+            state.player_projectile_owners,
+        ),
         jnp.arange(static_params.player_count),
     )
 
@@ -2871,11 +2907,13 @@ def shoot_projectile(state: EnvState, action: int, static_params: StaticEnvParam
 def cast_spell(state, action, static_params):
 
     def _cast_player_spell(player_info, player_index):
-        player_projectiles, player_projectile_directions, player_projectile_owners = player_info
+        player_projectiles, player_projectile_directions, player_projectile_owners = (
+            player_info
+        )
 
         is_casting_spell = jnp.logical_and(
             action[player_index] == Action.CAST_SPELL.value,
-            state.learned_spells[player_index]
+            state.learned_spells[player_index],
         )
 
         is_casting_fireball = jnp.logical_and(
@@ -2886,7 +2924,11 @@ def cast_spell(state, action, static_params):
             player_projectiles.mask[state.player_level].sum()
             < (static_params.max_player_projectiles * static_params.player_count),
         )
-        new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners = spawn_projectile(
+        (
+            new_player_projectiles,
+            new_player_projectile_directions,
+            new_player_projectile_owners,
+        ) = spawn_projectile(
             state,
             static_params,
             player_projectiles,
@@ -2899,30 +2941,36 @@ def cast_spell(state, action, static_params):
             ProjectileType.FIREBALL.value,
         )
 
-        return (new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners), is_casting_fireball
-    
+        return (
+            new_player_projectiles,
+            new_player_projectile_directions,
+            new_player_projectile_owners,
+        ), is_casting_fireball
+
     (
-        new_player_projectiles, 
-        new_player_projectile_directions, 
+        new_player_projectiles,
+        new_player_projectile_directions,
         new_player_projectile_owners,
     ), did_cast_spell = jax.lax.scan(
-        _cast_player_spell, 
+        _cast_player_spell,
         (
-            state.player_projectiles, 
-            state.player_projectile_directions, 
+            state.player_projectiles,
+            state.player_projectile_directions,
             state.player_projectile_owners,
-        ), 
-        jnp.arange(static_params.player_count)
-    ) 
+        ),
+        jnp.arange(static_params.player_count),
+    )
     new_achievements = state.achievements.at[:, Achievement.CAST_SPELL.value].set(
-        jnp.logical_or(state.achievements[:, Achievement.CAST_SPELL.value], did_cast_spell)
+        jnp.logical_or(
+            state.achievements[:, Achievement.CAST_SPELL.value], did_cast_spell
+        )
     )
 
     return state.replace(
         player_projectiles=new_player_projectiles,
         player_projectile_directions=new_player_projectile_directions,
         player_projectile_owners=new_player_projectile_owners,
-        player_mana=state.player_mana - did_cast_spell*2,
+        player_mana=state.player_mana - did_cast_spell * 2,
         achievements=new_achievements,
     )
 
@@ -3015,8 +3063,13 @@ def drink_potion(state, action):
 
     return state.replace(
         inventory=state.inventory.replace(
-            potions=state.inventory.potions.at[jnp.arange(state.inventory.potions.shape[0]), drinking_potion_index].set(
-                state.inventory.potions[jnp.arange(state.inventory.potions.shape[0]), drinking_potion_index] - 1 * is_drinking_potion
+            potions=state.inventory.potions.at[
+                jnp.arange(state.inventory.potions.shape[0]), drinking_potion_index
+            ].set(
+                state.inventory.potions[
+                    jnp.arange(state.inventory.potions.shape[0]), drinking_potion_index
+                ]
+                - 1 * is_drinking_potion
             )
         ),
         player_health=state.player_health + delta_health,
@@ -3032,7 +3085,9 @@ def read_book(state, action):
     )
     new_spells = jnp.logical_or(state.learned_spells, is_reading_book)
     new_achievements = state.achievements.at[:, Achievement.LEARN_SPELL.value].set(
-        jnp.logical_or(state.achievements[:, Achievement.LEARN_SPELL.value], is_reading_book)
+        jnp.logical_or(
+            state.achievements[:, Achievement.LEARN_SPELL.value], is_reading_book
+        )
     )
 
     return state.replace(
@@ -3055,9 +3110,7 @@ def enchant(rng, state: EnvState, action, static_params: StaticEnvParams):
     )
 
     enchantment_type = jnp.where(
-        target_block == BlockType.ENCHANTMENT_TABLE_FIRE.value, 
-        1, 
-        2
+        target_block == BlockType.ENCHANTMENT_TABLE_FIRE.value, 1, 2
     )
 
     num_gems = jnp.where(
@@ -3072,7 +3125,7 @@ def enchant(rng, state: EnvState, action, static_params: StaticEnvParams):
     )
     is_enchanting_bow = jnp.logical_and(
         could_enchant,
-        jnp.logical_and(action == Action.ENCHANT_BOW.value, state.inventory.bow > 0)
+        jnp.logical_and(action == Action.ENCHANT_BOW.value, state.inventory.bow > 0),
     )
     is_enchanting_sword = jnp.logical_and(
         could_enchant,
@@ -3084,21 +3137,24 @@ def enchant(rng, state: EnvState, action, static_params: StaticEnvParams):
     is_enchanting_armour = jnp.logical_and(
         could_enchant,
         jnp.logical_and(
-            action == Action.ENCHANT_ARMOUR.value, state.inventory.armour.sum(axis=1) > 0
+            action == Action.ENCHANT_ARMOUR.value,
+            state.inventory.armour.sum(axis=1) > 0,
         ),
     )
 
     rng, _rng = jax.random.split(rng)
     unenchanted_armour = state.armour_enchantments == 0
     opposite_enchanted_armour = jnp.logical_and(
-        state.armour_enchantments != 0, state.armour_enchantments != enchantment_type[:, None]
+        state.armour_enchantments != 0,
+        state.armour_enchantments != enchantment_type[:, None],
     )
 
     armour_targets = (
-        unenchanted_armour + (unenchanted_armour.sum(axis=1) == 0)[:, None] * opposite_enchanted_armour
+        unenchanted_armour
+        + (unenchanted_armour.sum(axis=1) == 0)[:, None] * opposite_enchanted_armour
     )
 
-    _rngs = jax.random.split(rng, static_params.player_count+1)
+    _rngs = jax.random.split(rng, static_params.player_count + 1)
     rng, _rng = _rngs[0], _rngs[1:]
     armour_target = jax.vmap(jax.random.choice, in_axes=(0, None, None, None, 0))(
         _rng, jnp.arange(4), (), True, armour_targets
@@ -3117,9 +3173,14 @@ def enchant(rng, state: EnvState, action, static_params: StaticEnvParams):
         + (1 - is_enchanting_bow) * state.bow_enchantment
     )
 
-    new_armour_enchantments = state.armour_enchantments.at[jnp.arange(static_params.player_count), armour_target].set(
+    new_armour_enchantments = state.armour_enchantments.at[
+        jnp.arange(static_params.player_count), armour_target
+    ].set(
         is_enchanting_armour * enchantment_type
-        + (1 - is_enchanting_armour) * state.armour_enchantments[jnp.arange(static_params.player_count), armour_target]
+        + (1 - is_enchanting_armour)
+        * state.armour_enchantments[
+            jnp.arange(static_params.player_count), armour_target
+        ]
     )
 
     new_sapphire = state.inventory.sapphire - 1 * is_enchanting * (
@@ -3154,7 +3215,9 @@ def enchant(rng, state: EnvState, action, static_params: StaticEnvParams):
 
 
 def boss_logic(state, static_params):
-    new_achievements = state.achievements.at[:, Achievement.DEFEAT_NECROMANCER.value].set(
+    new_achievements = state.achievements.at[
+        :, Achievement.DEFEAT_NECROMANCER.value
+    ].set(
         jnp.logical_or(
             state.achievements[:, Achievement.DEFEAT_NECROMANCER.value],
             has_beaten_boss(state, static_params),
@@ -3175,7 +3238,8 @@ def calculate_inventory_achievements(state):
     # Wood
     achievements = state.achievements.at[:, Achievement.COLLECT_WOOD.value].set(
         jnp.logical_or(
-            state.achievements[:, Achievement.COLLECT_WOOD.value], state.inventory.wood > 0
+            state.achievements[:, Achievement.COLLECT_WOOD.value],
+            state.inventory.wood > 0,
         )
     )
     # Stone
@@ -3199,7 +3263,8 @@ def calculate_inventory_achievements(state):
     # Diamond
     achievements = achievements.at[:, Achievement.COLLECT_DIAMOND.value].set(
         jnp.logical_or(
-            achievements[:, Achievement.COLLECT_DIAMOND.value], state.inventory.diamond > 0
+            achievements[:, Achievement.COLLECT_DIAMOND.value],
+            state.inventory.diamond > 0,
         )
     )
     # Ruby
@@ -3218,7 +3283,8 @@ def calculate_inventory_achievements(state):
     # Sapling
     achievements = achievements.at[:, Achievement.COLLECT_SAPLING.value].set(
         jnp.logical_or(
-            achievements[:, Achievement.COLLECT_SAPLING.value], state.inventory.sapling > 0
+            achievements[:, Achievement.COLLECT_SAPLING.value],
+            state.inventory.sapling > 0,
         )
     )
     # Bow
@@ -3269,17 +3335,20 @@ def calculate_inventory_achievements(state):
     # Sword
     achievements = achievements.at[:, Achievement.MAKE_WOOD_SWORD.value].set(
         jnp.logical_or(
-            achievements[:, Achievement.MAKE_WOOD_SWORD.value], state.inventory.sword >= 1
+            achievements[:, Achievement.MAKE_WOOD_SWORD.value],
+            state.inventory.sword >= 1,
         )
     )
     achievements = achievements.at[:, Achievement.MAKE_STONE_SWORD.value].set(
         jnp.logical_or(
-            achievements[:, Achievement.MAKE_STONE_SWORD.value], state.inventory.sword >= 2
+            achievements[:, Achievement.MAKE_STONE_SWORD.value],
+            state.inventory.sword >= 2,
         )
     )
     achievements = achievements.at[:, Achievement.MAKE_IRON_SWORD.value].set(
         jnp.logical_or(
-            achievements[:, Achievement.MAKE_IRON_SWORD.value], state.inventory.sword >= 3
+            achievements[:, Achievement.MAKE_IRON_SWORD.value],
+            state.inventory.sword >= 3,
         )
     )
     achievements = achievements.at[:, Achievement.MAKE_DIAMOND_SWORD.value].set(
@@ -3292,7 +3361,9 @@ def calculate_inventory_achievements(state):
     return state.replace(achievements=achievements)
 
 
-def level_up_attributes(state: EnvState, action: jnp.array, params: EnvParams) -> EnvState:
+def level_up_attributes(
+    state: EnvState, action: jnp.array, params: EnvParams
+) -> EnvState:
     can_level_up = state.player_xp >= 1
 
     # Levelling up attributes
@@ -3330,8 +3401,12 @@ def level_up_attributes(state: EnvState, action: jnp.array, params: EnvParams) -
 
 
 def craftax_step(
-        rng: chex.PRNGKey, state: EnvState, actions: jnp.array, params: EnvParams, static_params: StaticEnvParams
-    ) -> Tuple[EnvState, chex.Array]:
+    rng: chex.PRNGKey,
+    state: EnvState,
+    actions: jnp.array,
+    params: EnvParams,
+    static_params: StaticEnvParams,
+) -> Tuple[EnvState, chex.Array]:
     init_achievements = state.achievements
     init_health = state.player_health
 
@@ -3340,11 +3415,7 @@ def craftax_step(
         jnp.logical_not(state.player_alive),
         jnp.logical_or(state.is_sleeping, state.is_resting),
     )
-    actions = jnp.where(
-        cant_do_action,
-        Action.NOOP.value,
-        actions
-    )
+    actions = jnp.where(cant_do_action, Action.NOOP.value, actions)
 
     # Change floor
     state = change_floor(state, actions, params, static_params)
@@ -3412,19 +3483,13 @@ def craftax_step(
 
     # Gain reward if player gained health
     health_reward = jnp.where(
-        state.player_alive,
-        (state.player_health - init_health) * 0.1,
-        0.0
+        state.player_alive, (state.player_health - init_health) * 0.1, 0.0
     )
 
     individual_reward = achievement_reward + health_reward
     shared_reward = individual_reward.sum().repeat(static_params.player_count)
 
-    reward = jax.lax.select(
-        params.shared_reward,
-        shared_reward,
-        individual_reward
-    )
+    reward = jax.lax.select(params.shared_reward, shared_reward, individual_reward)
 
     player_alive = state.player_health > 0.0
 
@@ -3434,7 +3499,7 @@ def craftax_step(
         player_alive=player_alive,
         timestep=state.timestep + 1,
         light_level=calculate_light_level(state.timestep + 1, params),
-        individual_returns=state.individual_returns+individual_reward,
+        individual_returns=state.individual_returns + individual_reward,
         state_rng=_rng,
     )
 

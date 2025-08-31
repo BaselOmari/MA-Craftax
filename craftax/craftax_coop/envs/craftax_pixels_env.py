@@ -3,7 +3,10 @@
 # ===========================
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+sys.path.append(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+)
 
 import chex
 import jax
@@ -21,34 +24,40 @@ from craftax_coop.renderer.renderer_pixels import render_craftax_pixels
 from craftax_coop.util.game_logic_utils import has_beaten_boss
 from craftax_coop.world_gen.world_gen import generate_world
 
+
 class CraftaxCoopPixelsEnv(MultiAgentEnv):
     def __init__(self, num_agents: int = 3):
         self.num_agents = num_agents
         self.static_env_params = CraftaxCoopPixelsEnv.default_static_params()
         self.pixel_size = BLOCK_PIXEL_SIZE_AGENT
 
-        self.agents = [
-            f"agent_{i}" for i in range(self.static_env_params.player_count)
-        ]
+        self.agents = [f"agent_{i}" for i in range(self.static_env_params.player_count)]
         self.action_spaces = {name: self.action_shape() for name in self.agents}
-        self.observation_spaces = {name: self.observation_shape() for name in self.agents}
+        self.observation_spaces = {
+            name: self.observation_shape() for name in self.agents
+        }
 
         self.player_specific_textures = load_player_specific_textures(
-            TEXTURES[self.pixel_size],
-            self.static_env_params.player_count
+            TEXTURES[self.pixel_size], self.static_env_params.player_count
         )
 
     @partial(jax.jit, static_argnums=(0,))
-    def reset(self, key: chex.PRNGKey, _=None) -> Tuple[Dict[str, chex.Array], EnvState]:
+    def reset(
+        self, key: chex.PRNGKey, _=None
+    ) -> Tuple[Dict[str, chex.Array], EnvState]:
         state = generate_world(key, self.default_params, self.static_env_params)
         return self.get_obs(state), state
 
     @partial(jax.jit, static_argnums=(0,))
     def step_env(
         self, key: chex.PRNGKey, state: EnvState, actions: Dict[str, chex.Array]
-    ) -> Tuple[Dict[str, chex.Array], EnvState, Dict[str, float], Dict[str, bool], Dict]:
+    ) -> Tuple[
+        Dict[str, chex.Array], EnvState, Dict[str, float], Dict[str, bool], Dict
+    ]:
         actions = jnp.array(list(actions.values()))
-        state, reward = craftax_step(key, state, actions, self.default_params, self.static_env_params)
+        state, reward = craftax_step(
+            key, state, actions, self.default_params, self.static_env_params
+        )
 
         obs = self.get_obs(state)
         done = self.is_terminal(state, self.default_params)
@@ -76,8 +85,9 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
                 state,
                 self.pixel_size,
                 self.static_env_params,
-                self.player_specific_textures
-            ) / 255.0
+                self.player_specific_textures,
+            )
+            / 255.0
         )
         obs = {n: o for n, o in zip(self.agents, pixels)}
         return obs
@@ -85,10 +95,7 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
     @partial(jax.jit, static_argnums=(0,))
     def get_avail_actions(self, state: EnvState) -> Dict[str, chex.Array]:
         aa = jnp.full(len(Action), True)
-        return {
-            agent: aa[i]
-            for i, agent in enumerate(self.agents)
-        }
+        return {agent: aa[i] for i, agent in enumerate(self.agents)}
 
     @property
     def default_params(self) -> EnvParams:
@@ -104,13 +111,14 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
     def observation_shape(self) -> spaces.Box:
         map_height = OBS_DIM[0]
         inventory_height = INVENTORY_OBS_HEIGHT
-        teammate_dashboard_height = (self.static_env_params.player_count+1)//2
+        teammate_dashboard_height = (self.static_env_params.player_count + 1) // 2
         return spaces.Box(
             0.0,
             1.0,
             (
                 OBS_DIM[1] * self.pixel_size,
-                (map_height + inventory_height + teammate_dashboard_height) * self.pixel_size,
+                (map_height + inventory_height + teammate_dashboard_height)
+                * self.pixel_size,
                 3,
             ),
             dtype=jnp.float32,

@@ -282,9 +282,12 @@ def get_damage_done_to_player(state, static_params, damage_vector):
     defense_vector = get_player_defense_vector(state)
     return get_damage(damage_vector, defense_vector)
 
+
 def get_damage_between_players(state, other_player_index):
     # Damage player inflicts on other player
-    damage_vector = get_player_damage_vector(state) * (1 + 2.5 * state.is_sleeping[other_player_index, None])
+    damage_vector = get_player_damage_vector(state) * (
+        1 + 2.5 * state.is_sleeping[other_player_index, None]
+    )
 
     # Defense of damaged player
     defense_vector = get_player_defense_vector(state)[other_player_index]
@@ -343,9 +346,7 @@ def in_bounds(position, static_params):
 
 
 def is_in_solid_block(level_map, position):
-    return SOLID_BLOCK_MAPPING[
-        level_map[position[:, 0], position[:, 1]]
-    ]
+    return SOLID_BLOCK_MAPPING[level_map[position[:, 0], position[:, 1]]]
 
 
 def is_position_not_colliding_other_player(state, position):
@@ -365,7 +366,9 @@ def is_position_not_colliding_other_player(state, position):
     return jnp.logical_not(jnp.logical_or(next_pos_clash, curr_pos_clash))
 
 
-def is_position_in_bounds_not_in_mob_not_colliding(state, position, collision_map, static_params):
+def is_position_in_bounds_not_in_mob_not_colliding(
+    state, position, collision_map, static_params
+):
     pos_in_bounds = in_bounds(position, static_params)
     in_solid_block = is_in_solid_block(state.map[state.player_level], position)
     in_mob = is_in_mob(state, position)
@@ -414,7 +417,9 @@ def is_near_block(state, block_type, static_params):
     close_blocks = jax.vmap(jnp.add, in_axes=(0, None))(
         state.player_position, CLOSE_BLOCKS
     )
-    in_bound_blocks = jax.vmap(in_bounds, in_axes=(0, None))(close_blocks, static_params)
+    in_bound_blocks = jax.vmap(in_bounds, in_axes=(0, None))(
+        close_blocks, static_params
+    )
     correct_blocks = (
         state.map[state.player_level, close_blocks[:, :, 0], close_blocks[:, :, 1]]
         == block_type
@@ -428,7 +433,10 @@ def calculate_light_level(timestep, params):
 
 
 def is_in_other_player(state: EnvState, position: chex.Array):
-    is_pos_in_other_player = (jnp.expand_dims(state.player_position, axis=1) == jnp.expand_dims(position, axis=0)).all(axis=2)
+    is_pos_in_other_player = (
+        jnp.expand_dims(state.player_position, axis=1)
+        == jnp.expand_dims(position, axis=0)
+    ).all(axis=2)
     is_pos_in_other_player = is_pos_in_other_player.any(axis=0)
     return is_pos_in_other_player
 
@@ -520,13 +528,13 @@ def get_ladder_positions(rng, static_params, config, map):
 
 
 def get_player_icon_positions(player_count):
-    col1 = jnp.arange((player_count+1) // 2)
-    
-    col2_values = jnp.array([0, 6]) 
-    
-    col2 = jnp.tile(col2_values, (player_count+1) // len(col2_values))
+    col1 = jnp.arange((player_count + 1) // 2)
+
+    col2_values = jnp.array([0, 6])
+
+    col2 = jnp.tile(col2_values, (player_count + 1) // len(col2_values))
     col1 = jnp.repeat(col1, len(col2_values))[:player_count]
-    
+
     result = jnp.stack((col1, col2[:player_count]), axis=-1)
-    
+
     return result

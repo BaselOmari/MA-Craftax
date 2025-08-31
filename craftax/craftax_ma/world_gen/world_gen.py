@@ -140,7 +140,8 @@ def generate_dungeon(rng, static_params, config):
             maxval=room_sizes[room_index] - jnp.ones(2),
         )
         block_map = block_map.at[
-            room_position[0] + chest_position[:, 0], room_position[1] + chest_position[:, 1]
+            room_position[0] + chest_position[:, 0],
+            room_position[1] + chest_position[:, 1],
         ].set(BlockType.CHEST.value)
 
         # Fountain
@@ -542,13 +543,13 @@ def generate_world(rng, params, static_params):
         )
 
     melee_mobs = generate_empty_mobs(
-        static_params.max_melee_mobs*static_params.player_count
+        static_params.max_melee_mobs * static_params.player_count
     )
     ranged_mobs = generate_empty_mobs(
-        static_params.max_ranged_mobs*static_params.player_count
+        static_params.max_ranged_mobs * static_params.player_count
     )
     passive_mobs = generate_empty_mobs(
-        static_params.max_passive_mobs*static_params.player_count
+        static_params.max_passive_mobs * static_params.player_count
     )
 
     # Projectiles
@@ -565,19 +566,26 @@ def generate_world(rng, params, static_params):
 
         return projectiles, projectile_directions, projectile_owners
 
-    mob_projectiles, mob_projectile_directions, mob_projectile_owners = _create_projectiles(
-        static_params.max_mob_projectiles
+    mob_projectiles, mob_projectile_directions, mob_projectile_owners = (
+        _create_projectiles(static_params.max_mob_projectiles)
     )
-    player_projectiles, player_projectile_directions, player_projectile_owners = _create_projectiles(
-        static_params.max_player_projectiles * static_params.player_count
+    player_projectiles, player_projectile_directions, player_projectile_owners = (
+        _create_projectiles(
+            static_params.max_player_projectiles * static_params.player_count
+        )
     )
 
     # Plants
     growing_plants_positions = jnp.zeros(
-        (static_params.max_growing_plants * static_params.player_count, 2), dtype=jnp.int32
+        (static_params.max_growing_plants * static_params.player_count, 2),
+        dtype=jnp.int32,
     )
-    growing_plants_age = jnp.zeros(static_params.max_growing_plants * static_params.player_count, dtype=jnp.int32)
-    growing_plants_mask = jnp.zeros(static_params.max_growing_plants * static_params.player_count, dtype=bool)
+    growing_plants_age = jnp.zeros(
+        static_params.max_growing_plants * static_params.player_count, dtype=jnp.int32
+    )
+    growing_plants_mask = jnp.zeros(
+        static_params.max_growing_plants * static_params.player_count, dtype=bool
+    )
 
     # Potion mapping for episode
     rng, _rng = jax.random.split(rng)
@@ -601,7 +609,9 @@ def generate_world(rng, params, static_params):
         light_map=light_map,
         down_ladders=ladders_down,
         up_ladders=ladders_up,
-        chests_opened=jnp.zeros((static_params.num_levels, static_params.player_count), dtype=bool),
+        chests_opened=jnp.zeros(
+            (static_params.num_levels, static_params.player_count), dtype=bool
+        ),
         monsters_killed=jnp.zeros(static_params.num_levels, dtype=jnp.int32)
         .at[0]
         .set(10),  # First ladder starts open
@@ -658,7 +668,9 @@ def generate_world(rng, params, static_params):
         ),
         light_level=jnp.asarray(calculate_light_level(0, params), dtype=jnp.float32),
         ff_damage_dealt=jnp.asarray(0.0, dtype=jnp.float32),
-        individual_returns=jnp.full((static_params.player_count, ), 0.0, dtype=jnp.float32),
+        individual_returns=jnp.full(
+            (static_params.player_count,), 0.0, dtype=jnp.float32
+        ),
         all_necessities_frac=jnp.ones((static_params.player_count,), dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),

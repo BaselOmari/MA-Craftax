@@ -28,14 +28,23 @@ def get_all_players_distance_map(position, mask, static_params):
     player_proximity_map = jax.vmap(get_distance_map, in_axes=(0, None))(
         position, static_params.map_size
     )
-    max_dist = jnp.sqrt(static_params.map_size[0]**2 + static_params.map_size[1]**2)
-    
+    max_dist = jnp.sqrt(static_params.map_size[0] ** 2 + static_params.map_size[1] ** 2)
+
     # If player is dead, remove from distance consideration
     player_proximity_map_masked = jnp.where(
         mask[:, None, None],
         player_proximity_map,
-        jnp.full((static_params.player_count, static_params.map_size[0], static_params.map_size[1]), max_dist)
+        jnp.full(
+            (
+                static_params.player_count,
+                static_params.map_size[0],
+                static_params.map_size[1],
+            ),
+            max_dist,
+        ),
     )
-    
-    all_players_proximity_map = jnp.min(player_proximity_map_masked, axis=0).astype(jnp.float32)
+
+    all_players_proximity_map = jnp.min(player_proximity_map_masked, axis=0).astype(
+        jnp.float32
+    )
     return all_players_proximity_map

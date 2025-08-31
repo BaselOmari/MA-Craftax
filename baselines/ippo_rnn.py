@@ -8,6 +8,7 @@ Credit goes to the original authors: Rutherford et al.
 # ===========================
 import os
 import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -31,6 +32,7 @@ import wandb
 
 from jaxmarl.wrappers.baselines import LogWrapper
 from craftax.craftax_env import make_craftax_env_from_name
+
 
 # ===========================
 # Model Definitions
@@ -69,16 +71,20 @@ class ActorCriticRNN(nn.Module):
     def __call__(self, hidden, x):
         obs, dones = x
         embedding = nn.Dense(
-            self.config["FC_DIM_SIZE"], kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0)
+            self.config["FC_DIM_SIZE"],
+            kernel_init=orthogonal(np.sqrt(2)),
+            bias_init=constant(0.0),
         )(obs)
         embedding = nn.relu(embedding)
 
         rnn_in = (embedding, dones)
         hidden, embedding = ScannedRNN()(hidden, rnn_in)
 
-        actor_mean = nn.Dense(self.config["GRU_HIDDEN_DIM"], kernel_init=orthogonal(2), bias_init=constant(0.0))(
-            embedding
-        )
+        actor_mean = nn.Dense(
+            self.config["GRU_HIDDEN_DIM"],
+            kernel_init=orthogonal(2),
+            bias_init=constant(0.0),
+        )(embedding)
         actor_mean = nn.relu(actor_mean)
         action_logits = nn.Dense(
             self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0)
@@ -86,13 +92,18 @@ class ActorCriticRNN(nn.Module):
 
         pi = distrax.Categorical(logits=action_logits)
 
-        critic = nn.Dense(self.config["FC_DIM_SIZE"], kernel_init=orthogonal(2), bias_init=constant(0.0))(
-            embedding
-        )
+        critic = nn.Dense(
+            self.config["FC_DIM_SIZE"],
+            kernel_init=orthogonal(2),
+            bias_init=constant(0.0),
+        )(embedding)
         critic = nn.relu(critic)
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(critic)
+        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
+            critic
+        )
 
         return hidden, pi, jnp.squeeze(critic, axis=-1)
+
 
 # ===========================
 # Data Structures and Utilities
@@ -107,13 +118,16 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     info: jnp.ndarray
 
+
 def batchify(x: dict, agent_list, num_actors):
     x = jnp.stack([x[a] for a in agent_list])
     return x.reshape((num_actors, -1))
 
+
 def unbatchify(x: jnp.ndarray, agent_list, num_envs, num_actors):
     x = x.reshape((num_actors, num_envs, -1))
     return {a: x[i] for i, a in enumerate(agent_list)}
+
 
 # ===========================
 # Training Function
@@ -147,7 +161,9 @@ def make_train(config, env):
             ),
             jnp.zeros((1, config["NUM_ENVS"])),
         )
-        init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"], config["GRU_HIDDEN_DIM"])
+        init_hstate = ScannedRNN.initialize_carry(
+            config["NUM_ENVS"], config["GRU_HIDDEN_DIM"]
+        )
         network_params = network.init(_rng, init_hstate, init_x)
         if config["ANNEAL_LR"]:
             tx = optax.chain(
@@ -169,7 +185,9 @@ def make_train(config, env):
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
         obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
-        init_hstate = ScannedRNN.initialize_carry(config["NUM_ACTORS"], config["GRU_HIDDEN_DIM"])
+        init_hstate = ScannedRNN.initialize_carry(
+            config["NUM_ACTORS"], config["GRU_HIDDEN_DIM"]
+        )
 
         # TRAIN LOOP
         def _update_step(update_runner_state, unused):
@@ -274,9 +292,9 @@ def make_train(config, env):
                         ).clip(-config["CLIP_EPS"], config["CLIP_EPS"])
                         value_losses = jnp.square(value - targets)
                         value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                        value_loss = 0.5 * jnp.maximum(
-                            value_losses, value_losses_clipped
-                        ).mean()
+                        value_loss = (
+                            0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        )
 
                         # CALCULATE ACTOR LOSS
                         logratio = log_prob - traj_batch.log_prob
@@ -304,7 +322,14 @@ def make_train(config, env):
                             + config["VF_COEF"] * value_loss
                             - config["ENT_COEF"] * entropy
                         )
-                        return total_loss, (value_loss, loss_actor, entropy, ratio, approx_kl, clip_frac)
+                        return total_loss, (
+                            value_loss,
+                            loss_actor,
+                            entropy,
+                            ratio,
+                            approx_kl,
+                            clip_frac,
+                        )
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
                     total_loss, grads = grad_fn(
@@ -324,9 +349,7 @@ def make_train(config, env):
                 rng, _rng = jax.random.split(rng)
 
                 # adding an additional "fake" dimensionality to perform minibatching correctly
-                init_hstate = jnp.reshape(
-                    init_hstate, (1, config["NUM_ACTORS"], -1)
-                )
+                init_hstate = jnp.reshape(init_hstate, (1, config["NUM_ACTORS"], -1))
                 batch = (
                     init_hstate,
                     traj_batch,
@@ -379,7 +402,7 @@ def make_train(config, env):
             train_state = update_state[0]
             metric = traj_batch.info
 
-            ratio_0 = loss_info[1][3].at[0,0].get().mean()
+            ratio_0 = loss_info[1][3].at[0, 0].get().mean()
             loss_info = jax.tree.map(lambda x: x.mean(), loss_info)
             metric["update_steps"] = update_steps
             metric["loss"] = {
@@ -397,29 +420,31 @@ def make_train(config, env):
 
             def callback(metrics, actor_state: TrainState, step):
                 env_step = (
-                    metrics["update_steps"]
-                    * config["NUM_ENVS"]
-                    * config["NUM_STEPS"]
+                    metrics["update_steps"] * config["NUM_ENVS"] * config["NUM_STEPS"]
                 )
                 to_log = {
                     "env_step": env_step,
                     **metrics["loss"],
                 }
                 if metrics["returned_episode"].any():
-                    to_log.update(jax.tree.map(
-                        lambda x: x[metrics["returned_episode"]].mean(),
-                        metrics["user_info"]
-                    ))
-                    to_log["episode_lengths"] = metrics["returned_episode_lengths"][:, :, 0][
-                        metrics["returned_episode"][:, :, 0]
-                    ].mean()
-                    to_log["episode_returns"] = metrics["returned_episode_returns"][:, :, 0][
-                        metrics["returned_episode"][:, :, 0]
-                    ].mean()
+                    to_log.update(
+                        jax.tree.map(
+                            lambda x: x[metrics["returned_episode"]].mean(),
+                            metrics["user_info"],
+                        )
+                    )
+                    to_log["episode_lengths"] = metrics["returned_episode_lengths"][
+                        :, :, 0
+                    ][metrics["returned_episode"][:, :, 0]].mean()
+                    to_log["episode_returns"] = metrics["returned_episode_returns"][
+                        :, :, 0
+                    ][metrics["returned_episode"][:, :, 0]].mean()
                 print(to_log)
                 wandb.log(to_log, step=metrics["update_steps"])
 
-            jax.experimental.io_callback(callback, None, metric, train_state, update_steps)
+            jax.experimental.io_callback(
+                callback, None, metric, train_state, update_steps
+            )
             update_steps = update_steps + 1
             runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
             return (runner_state, update_steps), metric
@@ -439,6 +464,7 @@ def make_train(config, env):
         return {"runner_state": runner_state}
 
     return train
+
 
 # ===========================
 # Main Run Function
@@ -470,7 +496,9 @@ def single_run(config):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config_file", help="Name of the config YAML file (in baselines/config/)")
+    parser.add_argument(
+        "--config_file", help="Name of the config YAML file (in baselines/config/)"
+    )
     args = parser.parse_args()
 
     config_path = os.path.join(os.path.dirname(__file__), "config", args.config_file)

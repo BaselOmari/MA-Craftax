@@ -134,6 +134,7 @@ class Action(Enum):
     GIVE = 52  # Right Arrow
     # Player can give to all other players. (Action - GIVE) represents which player to give to.
 
+
 def avail_actions_fn(num_agents):
     base_actions = [
         1,  # 0: NOOP ✅
@@ -195,6 +196,7 @@ def avail_actions_fn(num_agents):
     extra_give_actions = [0] * (num_agents - 1)
 
     return jnp.array(base_actions + extra_give_actions, dtype=int)
+
 
 class MobType(Enum):
     PASSIVE = 0
@@ -710,32 +712,36 @@ def apply_alpha(texture):
         jnp.expand_dims(texture[:, :, 3], axis=-1), 3, axis=-1
     )
 
+
 def load_player_specific_textures(texture_set, player_count) -> PlayerSpecificTextures:
-    color_palette = (jnp.array(husl_palette(player_count, h=0.5, l=0.5)) * 255).astype(jnp.uint32)
+    color_palette = (jnp.array(husl_palette(player_count, h=0.5, l=0.5)) * 255).astype(
+        jnp.uint32
+    )
     return PlayerSpecificTextures(
         player_textures=load_multiplayer_textures(
-            texture_set["player_textures"], 
-            color_palette, 
-            player_count
+            texture_set["player_textures"], color_palette, player_count
         ),
         player_icon_textures=load_multiplayer_textures(
-            texture_set["player_icon_textures"], 
-            color_palette, 
-            player_count
+            texture_set["player_icon_textures"], color_palette, player_count
         )[:, :, :, :, :3],
         chest_textures=load_colored_block_textures(
-            texture_set["full_map_block_textures"][BlockType.CHEST.value], 
-            color_palette, 
-            player_count
-        )
+            texture_set["full_map_block_textures"][BlockType.CHEST.value],
+            color_palette,
+            player_count,
+        ),
     )
 
+
 def load_multiplayer_textures(base_textures, color_palette, player_count):
-    color_palette = jnp.concatenate([color_palette, jnp.ones((player_count, 1))], axis=-1)
+    color_palette = jnp.concatenate(
+        [color_palette, jnp.ones((player_count, 1))], axis=-1
+    )
     colors_broadcasted = color_palette[:, None, None, None, :]
     multiplayer_textures = base_textures[None, :].repeat(player_count, 0)
     mask = (multiplayer_textures == jnp.array([0, 0, 0, 1])).all(axis=-1)[..., None]
-    multiplayer_textures_colored = jnp.where(mask, colors_broadcasted, multiplayer_textures)
+    multiplayer_textures_colored = jnp.where(
+        mask, colors_broadcasted, multiplayer_textures
+    )
     return multiplayer_textures_colored
 
 
@@ -743,7 +749,9 @@ def load_colored_block_textures(base_textures, color_palette, player_count):
     colors_broadcasted = color_palette[:, None, None, :]
     multiplayer_textures = base_textures[None, :].repeat(player_count, 0)
     mask = (multiplayer_textures == jnp.array([0, 0, 0])).all(axis=-1)[..., None]
-    multiplayer_textures_colored = jnp.where(mask, colors_broadcasted, multiplayer_textures)
+    multiplayer_textures_colored = jnp.where(
+        mask, colors_broadcasted, multiplayer_textures
+    )
     return multiplayer_textures_colored
 
 
@@ -763,6 +771,7 @@ def load_mob_texture_set(filenames, block_pixel_size):
 
     return jnp.array(textures), jnp.array(texture_alphas)
 
+
 def load_request_message_textures(block_pixel_size):
     icon_pixel_size = int(block_pixel_size * 0.6)
     start_loc_x = (block_pixel_size - icon_pixel_size) // 2
@@ -771,29 +780,29 @@ def load_request_message_textures(block_pixel_size):
 
     def _overlay_item(icon_texture):
         combined_message_texture = message_bubble_texture
-        
+
         # Only for areas where the icon is not transparent overlay the icon
         if icon_texture.shape[-1] == 4:
             original_slice = combined_message_texture[
-                start_loc_y:start_loc_y + icon_pixel_size, 
-                start_loc_x:start_loc_x + icon_pixel_size, 
-                :3
+                start_loc_y : start_loc_y + icon_pixel_size,
+                start_loc_x : start_loc_x + icon_pixel_size,
+                :3,
             ]
             updated_slice = jnp.where(
-                (icon_texture[:, :, 3] == 1)[:, :, None], 
-                icon_texture[:, :, :3], 
-                original_slice
+                (icon_texture[:, :, 3] == 1)[:, :, None],
+                icon_texture[:, :, :3],
+                original_slice,
             )
         else:
             updated_slice = icon_texture
 
         combined_message_texture = combined_message_texture.at[
-            start_loc_y:start_loc_y + icon_pixel_size, 
-            start_loc_x:start_loc_x + icon_pixel_size, 
-            :3
+            start_loc_y : start_loc_y + icon_pixel_size,
+            start_loc_x : start_loc_x + icon_pixel_size,
+            :3,
         ].set(updated_slice)
         return combined_message_texture
-    
+
     item_name_list = [
         "food.png",
         "drink.png",
@@ -805,10 +814,9 @@ def load_request_message_textures(block_pixel_size):
         "ruby.png",
         "sapphire.png",
     ]
-    return jnp.array([
-        _overlay_item(load_texture(f, icon_pixel_size))
-        for f in item_name_list
-    ])
+    return jnp.array(
+        [_overlay_item(load_texture(f, icon_pixel_size)) for f in item_name_list]
+    )
 
 
 def load_all_textures(block_pixel_size):
@@ -943,7 +951,9 @@ def load_all_textures(block_pixel_size):
     )
 
     # Teammate directions
-    def _generate_all_direction_textures(horizontal_texture_base, diagonal_texture_base):
+    def _generate_all_direction_textures(
+        horizontal_texture_base, diagonal_texture_base
+    ):
         right = horizontal_texture_base
         up = jnp.rot90(right, k=1)
         left = jnp.rot90(right, k=2)
@@ -952,15 +962,21 @@ def load_all_textures(block_pixel_size):
         top_left = jnp.rot90(top_right, k=1)
         bottom_left = jnp.rot90(top_right, k=2)
         bottom_right = jnp.rot90(top_right, k=3)
-        return jnp.array([
-            [top_left, up, top_right],
-            [left, left, right],
-            [bottom_left, down, bottom_right],
-        ])
+        return jnp.array(
+            [
+                [top_left, up, top_right],
+                [left, left, right],
+                [bottom_left, down, bottom_right],
+            ]
+        )
 
     direction_texture_base = load_texture("pointer-right.png", small_block_pixel_size)
-    direction_diagonal_texture_base = load_texture("pointer-top-right.png", small_block_pixel_size)
-    direction_textures = _generate_all_direction_textures(direction_texture_base, direction_diagonal_texture_base)
+    direction_diagonal_texture_base = load_texture(
+        "pointer-top-right.png", small_block_pixel_size
+    )
+    direction_textures = _generate_all_direction_textures(
+        direction_texture_base, direction_diagonal_texture_base
+    )
 
     # inventory
 

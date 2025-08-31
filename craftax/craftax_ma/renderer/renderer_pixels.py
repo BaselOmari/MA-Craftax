@@ -3,7 +3,11 @@ from functools import partial
 
 from craftax_ma.constants import *
 from craftax_ma.craftax_state import EnvState, StaticEnvParams
-from craftax_ma.util.game_logic_utils import is_boss_vulnerable, get_player_icon_positions
+from craftax_ma.util.game_logic_utils import (
+    is_boss_vulnerable,
+    get_player_icon_positions,
+)
+
 
 @partial(
     jax.jit,
@@ -12,7 +16,13 @@ from craftax_ma.util.game_logic_utils import is_boss_vulnerable, get_player_icon
         2,
     ),
 )
-def render_craftax_pixels(state, block_pixel_size, static_params, player_specific_textures, do_night_noise=True):
+def render_craftax_pixels(
+    state,
+    block_pixel_size,
+    static_params,
+    player_specific_textures,
+    do_night_noise=True,
+):
     textures = TEXTURES[block_pixel_size]
     obs_dim_array = jnp.array([OBS_DIM[0], OBS_DIM[1]], dtype=jnp.int32)
 
@@ -158,7 +168,9 @@ def render_craftax_pixels(state, block_pixel_size, static_params, player_specifi
         player_texture_index = jax.lax.select(
             state.player_alive[player_index], player_texture_index, 5
         )
-        player_texture = player_specific_textures.player_textures[0, player_texture_index]
+        player_texture = player_specific_textures.player_textures[
+            0, player_texture_index
+        ]
         player_texture, player_texture_alpha = (
             player_texture[:, :, :3],
             player_texture[:, :, 3:],

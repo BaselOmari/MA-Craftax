@@ -143,6 +143,7 @@ class EnvParams:
     shared_reward: bool = False
     friendly_fire: bool = True
 
+
 @struct.dataclass
 class StaticEnvParams:
     map_size: Tuple[int, int] = (48, 48)

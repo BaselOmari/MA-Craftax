@@ -11,6 +11,7 @@ from craftax.craftax_ma.envs.craftax_pixels_env import (
     CraftaxMAPixelsEnv,
 )
 
+
 def make_craftax_env_from_name(name: str):
     if name == "Craftax-Coop-Symbolic":
         return CraftaxCoopSymbolicEnv()

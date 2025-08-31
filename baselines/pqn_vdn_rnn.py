@@ -8,6 +8,7 @@ Credit goes to the original authors: Gallici et al.
 # ===========================
 import os
 import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
@@ -30,6 +31,7 @@ from jaxmarl.wrappers.baselines import (
     CTRolloutManager,
 )
 from craftax.craftax_env import make_craftax_env_from_name
+
 
 # ===========================
 # Model Definitions
@@ -65,6 +67,7 @@ class ScannedRNN(nn.Module):
             jax.random.PRNGKey(0), (*batch_size, hidden_size)
         )
 
+
 class QNetwork(nn.Module):
     action_dim: int
     hidden_size: int = 512
@@ -96,6 +99,7 @@ class QNetwork(nn.Module):
 
         return hidden, q_vals
 
+
 # ===========================
 # Data Structures and Utilities
 # ===========================
@@ -110,11 +114,13 @@ class Transition:
     avail_actions: chex.Array
     q_vals: chex.Array
 
+
 class CustomTrainState(TrainState):
     batch_stats: Any
     timesteps: int = 0
     n_updates: int = 0
     grad_steps: int = 0
+
 
 # ===========================
 # Training Function
@@ -273,7 +279,10 @@ def make_train(config, env):
                     avail_actions=batchify(avail_actions),
                     q_vals=q_vals,
                 )
-                return ((new_hs, new_obs, new_done, new_env_state), rng), (transition, info)
+                return ((new_hs, new_obs, new_done, new_env_state), rng), (
+                    transition,
+                    info,
+                )
 
             rng, _rng = jax.random.split(rng)
             (expl_state, rng), (transitions, infos) = jax.lax.scan(
@@ -284,11 +293,12 @@ def make_train(config, env):
             )
 
             train_state = train_state.replace(
-                timesteps=train_state.timesteps + config["NUM_STEPS"] * config["NUM_ENVS"]
+                timesteps=train_state.timesteps
+                + config["NUM_STEPS"] * config["NUM_ENVS"]
             )
 
             memory_transitions = jax.tree.map(
-                lambda x, y: jnp.concatenate([x[config["NUM_STEPS"]:], y], axis=0),
+                lambda x, y: jnp.concatenate([x[config["NUM_STEPS"] :], y], axis=0),
                 memory_transitions,
                 transitions,
             )
@@ -300,7 +310,10 @@ def make_train(config, env):
                 def _learn_phase(carry, minibatch):
 
                     train_state, rng = carry
-                    hs = jax.tree_util.tree_map(lambda x: x[0].reshape(-1, config["HIDDEN_SIZE"]), minibatch.last_hs)
+                    hs = jax.tree_util.tree_map(
+                        lambda x: x[0].reshape(-1, config["HIDDEN_SIZE"]),
+                        minibatch.last_hs,
+                    )
                     agent_in = (
                         minibatch.obs,
                         minibatch.last_done,
@@ -326,7 +339,9 @@ def make_train(config, env):
                             next_q = jnp.sum(next_q, axis=0)
                             return (lambda_returns, next_q), lambda_returns
 
-                        lambda_returns = reward[-1] + config["GAMMA"] * (1 - done[-1]) * last_q
+                        lambda_returns = (
+                            reward[-1] + config["GAMMA"] * (1 - done[-1]) * last_q
+                        )
                         last_q = jnp.max(q_vals[-1], axis=-1)
                         last_q = jnp.sum(last_q, axis=0)
                         _, targets = jax.lax.scan(
@@ -367,10 +382,13 @@ def make_train(config, env):
                             jnp.expand_dims(minibatch.action, axis=-1),
                             axis=-1,
                         ).squeeze(axis=-1)
-                        vdn_chosen_action_qvals = jnp.sum(chosen_action_qvals, axis=1)[:-1].reshape(-1)
+                        vdn_chosen_action_qvals = jnp.sum(chosen_action_qvals, axis=1)[
+                            :-1
+                        ].reshape(-1)
 
                         loss = 0.5 * jnp.mean(
-                            (vdn_chosen_action_qvals - jax.lax.stop_gradient(target)) ** 2
+                            (vdn_chosen_action_qvals - jax.lax.stop_gradient(target))
+                            ** 2
                         )
                         return loss, (updates, chosen_action_qvals)
 
@@ -423,12 +441,18 @@ def make_train(config, env):
             def callback(metrics, infos):
                 to_log = metrics
                 if infos["returned_episode"].any():
-                    to_log.update(jax.tree.map(
-                        lambda x: x[infos["returned_episode"]].mean(),
-                        infos["user_info"]
-                    ))
-                    to_log["episode_lengths"] = infos["returned_episode_lengths"][infos["returned_episode"]].mean()
-                    to_log["episode_returns"] = infos["returned_episode_returns"][infos["returned_episode"]].mean()
+                    to_log.update(
+                        jax.tree.map(
+                            lambda x: x[infos["returned_episode"]].mean(),
+                            infos["user_info"],
+                        )
+                    )
+                    to_log["episode_lengths"] = infos["returned_episode_lengths"][
+                        infos["returned_episode"]
+                    ].mean()
+                    to_log["episode_returns"] = infos["returned_episode_returns"][
+                        infos["returned_episode"]
+                    ].mean()
 
                 print(to_log)
                 wandb.log(to_log, step=metrics["update_steps"])
@@ -510,6 +534,7 @@ def make_train(config, env):
 
     return train
 
+
 # ===========================
 # Main Run Function
 # ===========================
@@ -536,6 +561,7 @@ def single_run(config):
     train_vjit = jax.jit(jax.vmap(make_train(config, env)))
     outs = jax.block_until_ready(train_vjit(rngs))
 
+
 def main():
     # Optional: config from CLI or YAML can be loaded here for flexibility
     parser = argparse.ArgumentParser()
@@ -546,6 +572,7 @@ def main():
     with open(config_path, "r") as f:
         config = yaml.safe_load(f)
     single_run(config)
+
 
 if __name__ == "__main__":
     main()
