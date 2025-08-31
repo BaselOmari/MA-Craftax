@@ -14,7 +14,7 @@ Updates will be released via GitHub releases and pypi.
 
 ## If others want to contribute to the benchmark, is there a mechanism for them to do so?
 
-Yes, instructions on how to contribute to Craftax are described [here](./CONTRIBUTING.md).
+Yes, instructions on how to contribute to Multi-Agent Craftax are described [here](./CONTRIBUTING.md).
 
 ## How are issues being solved?
 
