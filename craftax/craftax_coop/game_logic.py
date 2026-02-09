@@ -50,15 +50,20 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     )
     
     # Track kills between teams
-    # Players who were alive and now dead due to damage from opposite team
+    # Only count as team kill if the opposite team damage was the killing blow
     was_alive = state.player_health > 0
     is_now_dead = new_player_health <= 0
     just_killed = jnp.logical_and(was_alive, is_now_dead)
+    # Verify the damage from opposite team was sufficient to kill (killing blow check)
+    death_caused_by_opposite_team = jnp.logical_and(
+        just_killed,
+        damage_taken >= state.player_health  # Damage must be >= remaining health
+    )
     
     # Count kills per team: team_kills[0] = kills by Team A (subclass 0), team_kills[1] = kills by Team B (subclass 1)
-    # A kill by Team A happens when a Team B player (subclass 1) dies
-    team_a_kills = jnp.logical_and(just_killed, state.player_sc == 1).sum()  # Team B deaths = Team A kills
-    team_b_kills = jnp.logical_and(just_killed, state.player_sc == 0).sum()  # Team A deaths = Team B kills
+    # A kill by Team A happens when a Team B player dies from Team A's killing blow
+    team_a_kills = jnp.logical_and(death_caused_by_opposite_team, state.player_sc == 1).sum()  # Team B deaths from Team A
+    team_b_kills = jnp.logical_and(death_caused_by_opposite_team, state.player_sc == 0).sum()  # Team A deaths from Team B
     new_team_kills = state.team_kills.at[0].add(team_a_kills).at[1].add(team_b_kills)
        
     state = state.replace(
@@ -2067,17 +2072,29 @@ def update_mobs(rng, state, params, env_params, static_params):
         player_attack_index = jnp.argmax(per_player_contact)
 
         player_defense_vector = get_player_defense_vector(state)[player_attack_index]
-        player_damage_dealt = get_damage(projectile_damage_vector, player_defense_vector) * did_attack_player * env_params.friendly_fire
+        # Match melee interaction semantics: only damage opposing team (different subclass)
+        shooter_team = state.player_sc[projectile_owner]
+        victim_team = state.player_sc[player_attack_index]
+        is_cross_team_hit = shooter_team != victim_team
+        player_damage_dealt = (
+            get_damage(projectile_damage_vector, player_defense_vector)
+            * did_attack_player
+            * env_params.friendly_fire
+            * is_cross_team_hit
+        )
         new_player_health = state.player_health.at[player_attack_index].add(-player_damage_dealt)
         
         # Track projectile kills between teams
         shooter_index = state.player_projectile_owners[state.player_level, projectile_index]
-        shooter_team = state.player_sc[shooter_index]
-        victim_team = state.player_sc[player_attack_index]
         was_alive_victim = state.player_health[player_attack_index] > 0
         is_now_dead_victim = new_player_health[player_attack_index] <= 0
-        just_killed_projectile = jnp.logical_and(
+        # Only count if this projectile damage was the killing blow
+        death_caused_by_projectile = jnp.logical_and(
             jnp.logical_and(was_alive_victim, is_now_dead_victim),
+            player_damage_dealt >= state.player_health[player_attack_index]  # Killing blow check
+        )
+        just_killed_projectile = jnp.logical_and(
+            death_caused_by_projectile,
             shooter_team != victim_team  # Only count cross-team kills
         )
         # team_kills[0] = Team A kills, team_kills[1] = Team B kills

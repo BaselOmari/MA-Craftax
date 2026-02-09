@@ -860,10 +860,13 @@ def make_train(config, env):
             # Func to interleave update steps and plotting
 
         def _update_plot(runner_state, unused):
-            # First, update
-            runner_state, metric = jax.lax.scan(
-                _update_step, runner_state, None, config["LOGGING_UPDATES_INTERVAL"]
+            # First, do iterations of logging
+            state, update_steps = runner_state
+            state, empty = jax.lax.scan(
+                functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps), state, None,
+                config["LOGGING_NUM_CALLS"],
             )
+            runner_state = (state, update_steps)
 
             # Log model weights
             def save_weights_callback(weights, iter):
@@ -890,17 +893,12 @@ def make_train(config, env):
             # TODO make weight saving work
             #jax.debug.callback(save_weights_callback, runner_state[0].params, runner_state[-1])
 
-            # Can we save the environment state and resume training later?
-            # runner_state_copy = runner_state
-
-            # Then do iterations of logging
-            state, update_steps = runner_state
-            state, empty = jax.lax.scan(
-                functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps), state, None,
-                config["LOGGING_NUM_CALLS"],
+            # Then, update (training)
+            runner_state, metric = jax.lax.scan(
+                _update_step, runner_state, None, config["LOGGING_UPDATES_INTERVAL"]
             )
 
-            return (state, update_steps), metric
+            return runner_state, metric
 
         rng, _rng = jax.random.split(rng)
         runner_state = (
