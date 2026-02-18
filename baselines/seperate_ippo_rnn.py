@@ -760,7 +760,8 @@ def make_train(config, env):
 
         # Do one "step" of logging, writing the result to a file.
         # Several steps can be run in series using --logging_steps_per_viz to do long rollouts without hitting memory limits
-        def _logging_step(runner_state, unused, logging_threads, update_step):
+        def _logging_step(carry, unused, logging_threads, update_step):
+            runner_state, episode_count = carry
             # Visualization rollouts
             runner_state, traj_batch = jax.lax.scan(
                 _env_step, runner_state, None, config["LOGGING_STEPS_PER_CALL"],
@@ -776,12 +777,16 @@ def make_train(config, env):
 
             # Compute a pseudo episode_id from cumulative done flags
             # done shape: (T, num_agents, NUM_ENVS)  (network output field)
+            # episode_count shape: (num_agents, NUM_ENVS) — carried across logging steps
             # Shift by 1 so the done step itself still belongs to the old episode
             done_shifted = jnp.concatenate([
                 jnp.zeros((1,) + traj_batch.info['done'].shape[1:]),
                 traj_batch.info['done'][:-1]
             ], axis=0)
-            traj_batch.info['episode_id'] = jnp.cumsum(done_shifted, axis=0).astype(jnp.float32)
+            local_episode_id = jnp.cumsum(done_shifted, axis=0)  # (T, num_agents, NUM_ENVS)
+            traj_batch.info['episode_id'] = (episode_count[None, :, :] + local_episode_id).astype(jnp.float32)
+            # Update episode_count for next logging step: add total dones in this chunk
+            episode_count = episode_count + traj_batch.info['done'].sum(axis=0).astype(episode_count.dtype)
 
             # Add new logging fields here
             fields_to_log = ['health', 'food', 'drink', 'energy', 'done', 'is_sleeping', 'is_resting',
@@ -880,7 +885,7 @@ def make_train(config, env):
                 agent_hidden_states = hidden_states[:, agent_n, :, :]
                 jax.debug.callback(write_rnn_hstate, agent_hidden_states, log_array, update_step, agent_n)
 
-            return runner_state, None
+            return (runner_state, episode_count), None
 
             # Func to interleave update steps and plotting
 
@@ -914,8 +919,11 @@ def make_train(config, env):
         def _update_plot(runner_state, unused):
             # First, do iterations of logging
             state, update_steps = runner_state
-            state, empty = jax.lax.scan(
-                functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps), state, None,
+            # episode_count tracks cumulative episode IDs across logging steps: (num_agents, NUM_ENVS)
+            episode_count = jnp.zeros((env.num_agents, config["NUM_ENVS"]), dtype=jnp.int32)
+            (state, episode_count), empty = jax.lax.scan(
+                functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps),
+                (state, episode_count), None,
                 config["LOGGING_NUM_CALLS"],
             )
 
