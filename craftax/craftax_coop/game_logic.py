@@ -3420,7 +3420,7 @@ def calculate_inventory_achievements(state):
     return state.replace(achievements=achievements)
 
 
-def trade_materials(state, action, static_params): # only trade with agents in the same subclass 
+def trade_materials(state, action, params, static_params): # only trade with agents in the same subclass and within trading radius
     new_achievements = state.achievements
     new_trade_count = state.trade_count
     new_food_trade_count = state.food_trade_count
@@ -3433,13 +3433,26 @@ def trade_materials(state, action, static_params): # only trade with agents in t
 
     player_trading_to = action - Action.GIVE.value
     player_trading_to += 1 * (player_trading_to >= jnp.arange(static_params.player_count))
-    
+
+    # FOV-based proximity check: receiver must be within the FOV rectangle + 1 tile padding
+    # OBS_DIM = (9, 11) → half-extents = (4, 5) → with +1 padding = (5, 6)
+    giver_pos = state.player_position  # (player_count, 2) int32
+    receiver_pos = giver_pos[player_trading_to]  # (player_count, 2)
+    delta = jnp.abs(giver_pos - receiver_pos)  # (player_count, 2)
+    within_radius = jnp.logical_and(
+        delta[:, 0] <= (OBS_DIM[0] // 2 + 1),  # row: 4 + 1 = 5
+        delta[:, 1] <= (OBS_DIM[1] // 2 + 1),  # col: 5 + 1 = 6
+    )
+
     is_giving = jnp.logical_and(
         jnp.logical_and(
             action >= Action.GIVE.value, 
             action < (Action.GIVE.value + static_params.player_count - 1)
         ),
-        in_same_sc[jnp.arange(static_params.player_count), player_trading_to]
+        jnp.logical_and(
+            in_same_sc[jnp.arange(static_params.player_count), player_trading_to],
+            within_radius
+        )
     )
     other_player_is_requesting = jnp.logical_and(
         state.request_duration[player_trading_to] > 0,
@@ -3682,7 +3695,7 @@ def craftax_step(
     state = level_up_attributes(state, actions, params)
 
     # Trade
-    state = trade_materials(state, actions, static_params)
+    state = trade_materials(state, actions, params, static_params)
 
     # Request Materials
     state = make_request(state, actions)

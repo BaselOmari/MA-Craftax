@@ -33,9 +33,14 @@ import distrax
 
 import wandb
 
+import imageio
+
 from jaxmarl.wrappers.baselines import LogWrapper
 from craftax.craftax_env import make_craftax_env_from_name
 from craftax.environment_base.wrappers import VideoPlotWrapper
+from craftax.custom_rendering.base_rendering import load_rendering_resources
+from craftax.custom_rendering.ego_rendering import render_ego_perspective
+from craftax.custom_rendering.full_map_rendering import render_full_map
 
 # ===========================
 # Model Definitions
@@ -148,6 +153,16 @@ def make_train(config, env):
     # Note: In separate IPPO, minibatching is done over NUM_ENVS per agent
     # Each minibatch has shape (num_steps, num_agents, num_envs // NUM_MINIBATCHES, ...)
     config["MINIBATCH_SIZE"] = config["NUM_ENVS"] // config["NUM_MINIBATCHES"]
+
+    # Load rendering resources BEFORE wrapping (need base env's static_env_params)
+    _video_env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
+    _video_pixel_size = config.get("VIDEO_PIXEL_SIZE", 16)
+    _video_static_params = env.static_env_params
+    _video_rendering_res = load_rendering_resources(_video_env_name, pixel_size_preference=_video_pixel_size)
+    _video_textures = _video_rendering_res["TEXTURES"]
+    _video_player_textures = _video_rendering_res["load_player_specific_textures"](
+        _video_textures[_video_pixel_size], _video_static_params.player_count
+    )
 
     env = LogWrapper(env)
     env = VideoPlotWrapper(env, './output/', 256, False)
@@ -759,17 +774,26 @@ def make_train(config, env):
             # Null this for memory savings
             traj_batch.info['hidden_state'] = None
 
+            # Compute a pseudo episode_id from cumulative done flags
+            # done shape: (T, num_agents, NUM_ENVS)  (network output field)
+            # Shift by 1 so the done step itself still belongs to the old episode
+            done_shifted = jnp.concatenate([
+                jnp.zeros((1,) + traj_batch.info['done'].shape[1:]),
+                traj_batch.info['done'][:-1]
+            ], axis=0)
+            traj_batch.info['episode_id'] = jnp.cumsum(done_shifted, axis=0).astype(jnp.float32)
+
             # Add new logging fields here
             fields_to_log = ['health', 'food', 'drink', 'energy', 'done', 'is_sleeping', 'is_resting',
                              'player_position_x',
                              'player_position_y', 'recover', 'hunger', 'thirst', 'fatigue', 'light_level',
-                             #'dist_to_melee_l1',
-                             #'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
-                             #'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
+                             'dist_to_melee_l1',
+                             'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
+                             'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
                              #'delta', 'pred_delta',
                              'num_monsters_killed',
                              'has_sword', 'has_pick', 'held_iron', 'value',
-                             'entropy', 'log_prob', #'episode_id',
+                             'entropy', 'log_prob', 'episode_id',
                             ]
 
             # Callback function for logging hidden states
@@ -778,13 +802,14 @@ def make_train(config, env):
                 header_field_names = ['health', 'food', 'drink', 'energy', 'done', 'is_sleeping', 'is_resting',
                                       'player_position_x',
                                       'player_position_y', 'recover', 'hunger', 'thirst', 'fatigue', 'light_level',
-                                      #'dist_to_melee_l1',
-                                      #'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
-                                      #'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby',
-                                      #'num_ranged_nearby', 'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
+                                      'dist_to_melee_l1',
+                                      'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
+                                      'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby',
+                                      'num_ranged_nearby',
+                                      #'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                                       'num_monsters_killed',
                                       'has_sword',
-                                      'has_pick', 'held_iron', 'value', 'entropy', 'log_prob', #'episode_id',
+                                      'has_pick', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
                                         ]
 
                 run_out_path = os.path.join('./', wandb.run.id)
@@ -822,7 +847,7 @@ def make_train(config, env):
             # In seperate_ippo_rnn:
             # - Network outputs (action, done, value, entropy, log_prob) have shape (T, num_agents, NUM_ENVS)
             # - Environment fields (health, food, etc.) have shape (T, NUM_ENVS, num_agents)
-            network_output_fields = {'value', 'entropy', 'log_prob', 'done', 'action'}
+            network_output_fields = {'value', 'entropy', 'log_prob', 'done', 'action', 'episode_id'}
             
             def add_field_to_log_array(info_dict, log_array, field_key, agent_to_log):
                 field_value = info_dict[field_key]
@@ -859,6 +884,33 @@ def make_train(config, env):
 
             # Func to interleave update steps and plotting
 
+        # ===========================
+        # Video Rollout Step
+        # ===========================
+        def _video_env_step(runner_state, unused):
+            """One env step that also renders ego + full_map frames for video."""
+            runner_state, transition = _env_step(runner_state, unused)
+            # Unwrap env_state: runner_state[1] is vmapped LogEnvState
+            # LogEnvState.env_state -> base craftax EnvState
+            # We take env 0 from the vmap batch for video
+            vmapped_env_state = runner_state[1]
+            craftax_state = jax.tree_util.tree_map(lambda x: x[0], vmapped_env_state.env_state)
+
+            # Render ego-perspective: (num_agents, H, W, 3) float32 [0, 255]
+            ego_frames = render_ego_perspective(
+                craftax_state, _video_pixel_size, _video_static_params,
+                _video_player_textures, _video_env_name
+            )
+
+            # Render full map: (map_H, map_W, 3) float32 [0, 255]
+            full_map_frame = render_full_map(
+                craftax_state, _video_static_params,
+                _video_textures[_video_pixel_size], _video_player_textures,
+                _video_pixel_size, env_name=_video_env_name
+            )
+
+            return runner_state, (ego_frames, full_map_frame)
+
         def _update_plot(runner_state, unused):
             # First, do iterations of logging
             state, update_steps = runner_state
@@ -866,6 +918,75 @@ def make_train(config, env):
                 functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps), state, None,
                 config["LOGGING_NUM_CALLS"],
             )
+
+            # ===========================
+            # Video Rollout (fresh episode so we see the overworld spawn)
+            # ===========================
+            video_length = config.get("VIDEO_LENGTH", 200)
+
+            # Unpack training state
+            train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_v = state
+
+            # Fork RNG: one for video, one to continue training
+            rng_video, rng_continue = jax.random.split(rng_v)
+
+            # Reset envs to get a fresh episode (overworld, level 0)
+            video_reset_rngs = jax.random.split(rng_video, config["NUM_ENVS"])
+            video_obsv, video_env_state = jax.vmap(env.reset, in_axes=(0,))(video_reset_rngs)
+
+            # Fresh hidden states and done flags (zeros, matching structure)
+            video_hstate = jnp.zeros_like(hstate_v)
+            video_done = jax.tree_util.tree_map(jnp.zeros_like, done_v)
+
+            # Build video runner state (uses current policy weights)
+            rng_video2, _ = jax.random.split(rng_video)
+            video_runner = (train_state_v, video_env_state, video_obsv, video_done, video_hstate, rng_video2)
+
+            # Run video rollout — result state is discarded
+            _, (ego_frames, full_map_frames) = jax.lax.scan(
+                _video_env_step, video_runner, None, video_length
+            )
+
+            # Restore training state with updated RNG (video state discarded)
+            state = (train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_continue)
+
+            # ego_frames: (VIDEO_LENGTH, num_agents, H, W, 3)
+            # full_map_frames: (VIDEO_LENGTH, map_H, map_W, 3)
+
+            def save_video_callback(ego_frames, full_map_frames, step):
+                run_out_path = os.path.join('./', wandb.run.id, 'videos')
+                os.makedirs(run_out_path, exist_ok=True)
+                step_int = int(step)
+
+                # Save per-agent ego videos
+                num_agents = ego_frames.shape[1]
+                wandb_videos = {}
+                for agent_idx in range(num_agents):
+                    agent_frames = np.asarray(ego_frames[:, agent_idx]).astype(np.uint8)
+                    video_path = os.path.join(run_out_path, f'ego_agent_{agent_idx}_{step_int}.mp4')
+                    try:
+                        imageio.mimsave(video_path, agent_frames, fps=15, macro_block_size=1)
+                        wandb_videos[f"video/ego_agent_{agent_idx}"] = wandb.Video(video_path, fps=15, format="mp4")
+                        print(f'Saved ego video: {video_path}')
+                    except Exception as e:
+                        print(f'Failed to save ego video for agent {agent_idx}: {e}')
+
+                # Save full map video
+                full_map_np = np.asarray(full_map_frames).astype(np.uint8)
+                fullmap_path = os.path.join(run_out_path, f'full_map_{step_int}.mp4')
+                try:
+                    imageio.mimsave(fullmap_path, full_map_np, fps=15, macro_block_size=1)
+                    wandb_videos["video/full_map"] = wandb.Video(fullmap_path, fps=15, format="mp4")
+                    print(f'Saved full map video: {fullmap_path}')
+                except Exception as e:
+                    print(f'Failed to save full map video: {e}')
+
+                # Log all videos to wandb in one call
+                if wandb_videos:
+                    wandb.log(wandb_videos, step=step_int)
+
+            jax.debug.callback(save_video_callback, ego_frames, full_map_frames, update_steps)
+
             runner_state = (state, update_steps)
 
             # Log model weights

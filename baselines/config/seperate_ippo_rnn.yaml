@@ -40,3 +40,7 @@ LOGGING_UPDATES_INTERVAL: 2000  # Number of updates between logging phases
 LOGGING_NUM_CALLS: 50          # Number of logging_step calls per phase
 LOGGING_STEPS_PER_CALL: 1024  # Number of env steps per logging_step call
 LOGGING_THREADS: 1            # Number of env threads to log
+
+# Video recording parameters
+VIDEO_LENGTH: 200  # Number of env steps per video (rollout continues from current state)
+VIDEO_PIXEL_SIZE: 16  # Pixel size for rendering (7=agent, 16=medium, 64=large)

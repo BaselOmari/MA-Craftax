@@ -144,9 +144,12 @@ class EnvParams:
     reward_func: str = 'foraging'  # 'vanilla' or 'foraging'
     friendly_fire: bool = True
 
+    # Team Spawning Parameters
+    min_team_spawn_distance: int = 15
+
 @struct.dataclass
 class StaticEnvParams:
-    map_size: Tuple[int, int] = (48, 48)
+    map_size: Tuple[int, int] = (96, 96)
     num_levels: int = 9
     player_count: int = 2
 

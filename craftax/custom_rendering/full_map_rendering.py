@@ -2,11 +2,17 @@ import jax
 import jax.numpy as jnp
 
 
-def render_full_map(state, static_params, textures, player_specific_textures, block_pixel_size=16):
-    from craftax.craftax_coop.constants import (
-        BlockType, ItemType, MONSTERS_KILLED_TO_CLEAR_LEVEL
-    )
-    from craftax.craftax_coop.util.game_logic_utils import is_boss_vulnerable
+def render_full_map(state, static_params, textures, player_specific_textures, block_pixel_size=16, env_name="Craftax-Coop-Symbolic"):
+    if "Coop" in env_name:
+        from craftax.craftax_coop.constants import (
+            BlockType, ItemType, MONSTERS_KILLED_TO_CLEAR_LEVEL
+        )
+        from craftax.craftax_coop.util.game_logic_utils import is_boss_vulnerable
+    else:
+        from craftax.craftax_ma.constants import (
+            BlockType, ItemType, MONSTERS_KILLED_TO_CLEAR_LEVEL
+        )
+        from craftax.craftax_ma.util.game_logic_utils import is_boss_vulnerable
     
     # Get the full map for current floor (no viewport slicing)
     map_full = state.map[state.player_level]  # Shape: (48, 48)

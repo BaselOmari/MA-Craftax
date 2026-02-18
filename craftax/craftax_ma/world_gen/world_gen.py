@@ -488,21 +488,51 @@ def generate_smoothworld(rng, static_params, player_position, config, params=Non
 
 
 def generate_world(rng, params, static_params):
-    # Start players in the middle of the map
+    # --- Team-aware spawning (pre-map, for overworld level 0) ---
+    # Teams: even agent indices = Team A, odd = Team B
+    # Spawn centers chosen randomly with min distance, then smoothgen
+    # forces those tiles to config.player_spawn (GRASS/PATH).
+    map_h, map_w = static_params.map_size[0], static_params.map_size[1]
+    spawn_margin = 6  # stay away from map edges
+
+    # Build a grid of all candidate spawn positions (within margin)
+    _rows = jnp.arange(spawn_margin, map_h - spawn_margin)
+    _cols = jnp.arange(spawn_margin, map_w - spawn_margin)
+    _grid = jnp.stack(
+        jnp.meshgrid(_rows, _cols, indexing="ij"), axis=-1
+    )
+    all_spawn_positions = _grid.reshape(-1, 2)  # (N, 2)
+    num_candidates = all_spawn_positions.shape[0]
+
+    # Pick Team A center uniformly at random
+    rng, rng_a, rng_b = jax.random.split(rng, 3)
+    team_a_idx = jax.random.randint(rng_a, (), 0, num_candidates)
+    team_a_center = all_spawn_positions[team_a_idx]
+
+    # Pick Team B center: must be >= min_team_spawn_distance from Team A
+    dists_from_a = jnp.sqrt(
+        ((all_spawn_positions - team_a_center).astype(jnp.float32) ** 2).sum(axis=-1)
+    )
+    valid_mask = dists_from_a >= params.min_team_spawn_distance
+    valid_probs = valid_mask.astype(jnp.float32)
+    has_valid = valid_probs.sum() > 0
+    safe_sum = jnp.maximum(valid_probs.sum(), 1.0)
+    valid_probs = jnp.where(has_valid, valid_probs / safe_sum,
+                            jnp.ones(num_candidates) / num_candidates)
+    team_b_idx = jax.random.choice(rng_b, num_candidates, p=valid_probs)
+    team_b_center = all_spawn_positions[team_b_idx]
+
+    # Assign each player to its team centre
     def get_player_spawn(idx):
-        width = jnp.ceil(jnp.sqrt(static_params.player_count)).astype(jnp.int32)
-        return jnp.array(
-            [
-                (static_params.map_size[0] // 2) + (idx // width),
-                (static_params.map_size[1] // 2) + (idx % width),
-            ]
-        )
+        is_team_b = idx % 2  # 0 → Team A, 1 → Team B
+        return jnp.where(is_team_b, team_b_center, team_a_center)
 
     player_position = jax.vmap(get_player_spawn)(
         jnp.arange(0, static_params.player_count)
     )
 
     # Generate smoothgens (overworld, caves, elemental levels, boss level)
+    # smoothgen uses player_position for proximity maps and forces spawn tiles walkable
     rngs = jax.random.split(rng, 7)
     rng, _rng = rngs[0], rngs[1:]
     smoothgens = jax.vmap(generate_smoothworld, in_axes=(0, None, None, 0))(

@@ -488,19 +488,13 @@ def generate_smoothworld(rng, static_params, player_position, config, params=Non
 
 
 def generate_world(rng, params, static_params):
-    # Start players in the middle of the map
-    def get_player_spawn(idx):
-        width = jnp.ceil(jnp.sqrt(static_params.player_count)).astype(jnp.int32)
-        return jnp.array(
-            [
-                (static_params.map_size[0] // 2) + (idx // width),
-                (static_params.map_size[1] // 2) + (idx % width),
-            ]
-        )
-
-    player_position = jax.vmap(get_player_spawn)(
-        jnp.arange(0, static_params.player_count)
-    )
+    # --- Phase 1: Generate all maps first (before choosing spawn) ---
+    # We need a temporary player_position for smoothgen (it uses it for
+    # proximity maps to push water/mountains away).  Place it at map centre;
+    # the real spawn will be chosen after map generation from PATH tiles.
+    map_h, map_w = static_params.map_size[0], static_params.map_size[1]
+    temp_center = jnp.array([map_h // 2, map_w // 2])
+    temp_player_position = jnp.tile(temp_center, (static_params.player_count, 1))
 
     # Fix player specializations
     player_specialization_order = jnp.array([Specialization.WARRIOR.value, Specialization.FORAGER.value, Specialization.MINER.value])
@@ -514,7 +508,7 @@ def generate_world(rng, params, static_params):
     rngs = jax.random.split(rng, 7)
     rng, _rng = rngs[0], rngs[1:]
     smoothgens = jax.vmap(generate_smoothworld, in_axes=(0, None, None, 0))(
-        _rng, static_params, player_position, ALL_SMOOTHGEN_CONFIGS
+        _rng, static_params, temp_player_position, ALL_SMOOTHGEN_CONFIGS
     )
 
     # Generate dungeons
@@ -533,6 +527,53 @@ def generate_world(rng, params, static_params):
         ),
         smoothgens,
         dungeons,
+    )
+
+    # --- Phase 2: Pick team spawn positions from PATH tiles on the start level ---
+    START_LEVEL = 2  # First dungeon level
+    start_map = map[START_LEVEL]  # (map_h, map_w)
+
+    # Build flat array of all PATH-tile coordinates on the start level
+    row_coords, col_coords = jnp.meshgrid(
+        jnp.arange(map_h), jnp.arange(map_w), indexing="ij"
+    )
+    all_coords = jnp.stack([row_coords.ravel(), col_coords.ravel()], axis=-1)  # (H*W, 2)
+    is_path = (start_map.ravel() == BlockType.PATH.value)  # (H*W,)
+
+    # Team A: sample uniformly from PATH tiles
+    rng, rng_a, rng_b = jax.random.split(rng, 3)
+    path_probs_a = is_path.astype(jnp.float32)
+    path_probs_a = path_probs_a / jnp.maximum(path_probs_a.sum(), 1.0)
+    team_a_flat_idx = jax.random.choice(rng_a, all_coords.shape[0], p=path_probs_a)
+    team_a_center = all_coords[team_a_flat_idx]  # (2,)
+
+    # Team B: sample from PATH tiles that are >= min_team_spawn_distance from Team A
+    dists_from_a = jnp.sqrt(
+        ((all_coords - team_a_center).astype(jnp.float32) ** 2).sum(axis=-1)
+    )
+    far_enough = dists_from_a >= params.min_team_spawn_distance
+    path_probs_b = (is_path & far_enough).astype(jnp.float32)
+    has_valid = path_probs_b.sum() > 0
+    # Fallback: if no PATH tile is far enough, use all PATH tiles
+    path_probs_b = jnp.where(has_valid,
+                             path_probs_b / jnp.maximum(path_probs_b.sum(), 1.0),
+                             path_probs_a)
+    team_b_flat_idx = jax.random.choice(rng_b, all_coords.shape[0], p=path_probs_b)
+    team_b_center = all_coords[team_b_flat_idx]  # (2,)
+
+    # Assign each player to its team centre
+    def get_player_spawn(idx):
+        is_team_b = idx % 2  # 0 → Team A, 1 → Team B
+        center = jnp.where(is_team_b, team_b_center, team_a_center)
+        return center
+
+    player_position = jax.vmap(get_player_spawn)(
+        jnp.arange(0, static_params.player_count)
+    )
+
+    # Force spawn tiles to PATH on the start level (clear the spot)
+    map = map.at[START_LEVEL, player_position[:, 0], player_position[:, 1]].set(
+        BlockType.PATH.value
     )
 
     # Mobs

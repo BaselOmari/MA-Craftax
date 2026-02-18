@@ -306,58 +306,49 @@ class VideoPlotWrapper(GymnaxWrapper):
 
         melee_pos = env_state.melee_mobs.position[env_state.player_level]
         melee_mask = env_state.melee_mobs.mask[env_state.player_level]
+        passive_pos = env_state.passive_mobs.position[env_state.player_level]
+        passive_mask = env_state.passive_mobs.mask[env_state.player_level]
+        ranged_pos = env_state.ranged_mobs.position[env_state.player_level]
+        ranged_mask = env_state.ranged_mobs.mask[env_state.player_level]
 
-        # TODO adapt all of these measures to multiagent
-        if False:
-            dists_to_melee = jnp.linalg.norm(env_state.player_position - melee_pos, ord=1, axis=-1)
-            dists_to_melee = jnp.where(melee_mask, dists_to_melee, jnp.inf)
-            closest_melee_idx = jnp.argmin(dists_to_melee)
-            closest_melee_dist_xy = env_state.player_position - melee_pos[closest_melee_idx]
-            melee_on_screen = jnp.logical_and(jnp.abs(closest_melee_dist_xy[0]) <= 5,
-                                              jnp.abs(closest_melee_dist_xy[1]) <= 4)
-            melee_on_screen = jnp.logical_and(melee_on_screen, melee_mask[closest_melee_idx])
-            dist_to_melee = dists_to_melee[closest_melee_idx]
+        # Per-player mob distance / count metrics (multi-agent adapted)
+        # player_position: (num_players, 2), mob_pos: (num_mobs, 2), mob_mask: (num_mobs,)
+        nearby_distance = 9
 
-            passive_pos = env_state.passive_mobs.position[env_state.player_level]
-            passive_mask = env_state.passive_mobs.mask[env_state.player_level]
+        def _mob_metrics_single_player(player_pos, mob_pos, mob_mask):
+            """Compute closest-mob distance, on-screen flag, and nearby count for one player."""
+            dists = jnp.linalg.norm(player_pos - mob_pos, ord=1, axis=-1)  # (num_mobs,)
+            dists = jnp.where(mob_mask, dists, jnp.inf)
+            closest_idx = jnp.argmin(dists)
+            closest_dist_xy = player_pos - mob_pos[closest_idx]
+            on_screen = jnp.logical_and(jnp.abs(closest_dist_xy[0]) <= 5,
+                                        jnp.abs(closest_dist_xy[1]) <= 4)
+            on_screen = jnp.logical_and(on_screen, mob_mask[closest_idx])
+            dist = dists[closest_idx]
+            num_nearby = (dists <= nearby_distance).sum()
+            return dist, on_screen, num_nearby
 
-            dists_to_passive = jnp.linalg.norm(env_state.player_position - passive_pos, ord=1, axis=-1)
-            dists_to_passive = jnp.where(passive_mask, dists_to_passive, jnp.inf)
-            closest_passive_idx = jnp.argmin(dists_to_passive)
-            closest_passive_dist_xy = env_state.player_position - passive_pos[closest_passive_idx]
-            passive_on_screen = jnp.logical_and(jnp.abs(closest_passive_dist_xy[0]) <= 5,
-                                                jnp.abs(closest_passive_dist_xy[1]) <= 4)
-            passive_on_screen = jnp.logical_and(passive_on_screen, passive_mask[closest_passive_idx])
-            dist_to_passive = dists_to_passive[closest_passive_idx]
+        # vmap over players: player_pos axis 0, mob arrays broadcast (None)
+        _mob_metrics_all_players = jax.vmap(_mob_metrics_single_player, in_axes=(0, None, None))
 
-            ranged_pos = env_state.ranged_mobs.position[env_state.player_level]
-            ranged_mask = env_state.ranged_mobs.mask[env_state.player_level]
-
-            dists_to_ranged = jnp.linalg.norm(env_state.player_position - ranged_pos, ord=1, axis = -1)
-            dists_to_ranged = jnp.where(ranged_mask, dists_to_ranged, jnp.inf)
-            closest_ranged_idx = jnp.argmin(dists_to_ranged)
-            closest_ranged_dist_xy = env_state.player_position - ranged_pos[closest_ranged_idx]
-            ranged_on_screen = jnp.logical_and(jnp.abs(closest_ranged_dist_xy[0]) <= 5, jnp.abs(closest_ranged_dist_xy[1]) <= 4)
-            ranged_on_screen = jnp.logical_and(ranged_on_screen, ranged_mask[closest_ranged_idx])
-            dist_to_ranged = dists_to_ranged[closest_ranged_idx]
-
-            # Slightly bigger radius than the screen, basically what mobs is the agent able to quickly interact with
-            nearby_distance = 9
-            num_melee_nearby = (dists_to_melee <= nearby_distance).sum()
-            num_passives_nearby = (dists_to_passive <= nearby_distance).sum()
-            num_ranged_nearby = (dists_to_ranged <= nearby_distance).sum()
+        dist_to_melee, melee_on_screen, num_melee_nearby = _mob_metrics_all_players(
+            env_state.player_position, melee_pos, melee_mask)
+        dist_to_passive, passive_on_screen, num_passives_nearby = _mob_metrics_all_players(
+            env_state.player_position, passive_pos, passive_mask)
+        dist_to_ranged, ranged_on_screen, num_ranged_nearby = _mob_metrics_all_players(
+            env_state.player_position, ranged_pos, ranged_mask)
 
         num_monsters_killed = env_state.monsters_killed[env_state.player_level]
 
-        #info['dist_to_melee_l1'] = dist_to_melee
-        #info['dist_to_passive_l1'] = dist_to_passive
-        #info['dist_to_ranged_l1'] = dist_to_ranged
-        #info['melee_on_screen'] = melee_on_screen
-        #info['passive_on_screen'] = passive_on_screen
-        #info['ranged_on_screen'] = ranged_on_screen
-        #info['num_melee_nearby'] = num_melee_nearby
-        #info['num_passives_nearby'] = num_passives_nearby
-        #info['num_ranged_nearby'] = num_ranged_nearby
+        info['dist_to_melee_l1'] = dist_to_melee
+        info['melee_on_screen'] = melee_on_screen.astype(jnp.float32)
+        info['dist_to_passive_l1'] = dist_to_passive
+        info['passive_on_screen'] = passive_on_screen.astype(jnp.float32)
+        info['dist_to_ranged_l1'] = dist_to_ranged
+        info['ranged_on_screen'] = ranged_on_screen.astype(jnp.float32)
+        info['num_melee_nearby'] = num_melee_nearby.astype(jnp.float32)
+        info['num_passives_nearby'] = num_passives_nearby.astype(jnp.float32)
+        info['num_ranged_nearby'] = num_ranged_nearby.astype(jnp.float32)
         info['num_monsters_killed'] = num_monsters_killed
         info['has_sword'] = env_state.inventory.sword
         info['has_pick'] = env_state.inventory.pickaxe
