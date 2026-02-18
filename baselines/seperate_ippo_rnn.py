@@ -376,7 +376,7 @@ def make_train(config, env):
             _, _, last_val, _ = jax.vmap(forward_single_agent)(
                 train_state.params, hstate, last_obs_batch, last_done_batch
             )
-            last_val = last_val.squeeze()  # (num_agents, num_envs)
+            last_val = last_val.squeeze(axis=1)  # (num_agents, num_envs)
 
             def _calculate_gae(traj_batch, last_val):
                 def _get_advantages(gae_and_next_value, transition):
