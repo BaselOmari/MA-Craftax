@@ -45,3 +45,4 @@ LOGGING_THREADS: 1            # Number of env threads to log
 # Video recording parameters
 VIDEO_LENGTH: 200  # Number of env steps per video (rollout continues from current state)
 VIDEO_PIXEL_SIZE: 16  # Pixel size for rendering (7=agent, 16=medium, 64=large)
+SAVE_HIDDEN_STATES: false     # Whether to save hidden state CSVs during logging (large files!)

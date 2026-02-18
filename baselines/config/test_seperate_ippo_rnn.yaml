@@ -36,6 +36,7 @@ LOGGING_UPDATES_INTERVAL: 12  # Number of updates between logging phases
 LOGGING_NUM_CALLS: 2  # Number of logging_step calls per phase
 LOGGING_STEPS_PER_CALL: 1024  # Number of env steps per logging_step call
 LOGGING_THREADS: 1  # Number of env threads to log (must be <= NUM_ENVS) -> set to 1 for less computing time
+SAVE_HIDDEN_STATES: false     # Whether to save hidden state CSVs during logging (large files!)
 
 # Seed configuration
 NUM_SEEDS: 1

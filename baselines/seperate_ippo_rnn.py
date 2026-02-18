@@ -814,9 +814,11 @@ def make_train(config, env):
 
             # Finally, log data associated with the visualization runs
 
-            hidden_states = traj_batch.info['hidden_state']
-            # In seperate_ippo_rnn, hidden_states already has shape (T, num_agents, NUM_ENVS, hidden_dim)
-            # No reshape needed - it's already in the correct format
+            save_hstates = config.get("SAVE_HIDDEN_STATES", False)
+            if save_hstates:
+                hidden_states = traj_batch.info['hidden_state']
+                # In seperate_ippo_rnn, hidden_states already has shape (T, num_agents, NUM_ENVS, hidden_dim)
+                # No reshape needed - it's already in the correct format
             # Null this for memory savings
             traj_batch.info['hidden_state'] = None
 
@@ -871,16 +873,21 @@ def make_train(config, env):
 
                 # We save to temp files and then append to the target file since numpy apparently cannot write files in append mode for some reason
                 for i in range(logging_threads):
-                    out_filename_hstates = os.path.join(run_out_path, 'hstates_{}_{}_{}.csv'.format(increment, agent_n, i))
                     temp_filename = os.path.join(run_out_path, 'temp.csv')
-                    np.savetxt(temp_filename,
-                               hstate[:, i, :], delimiter=',')
-                    temp_file = open(temp_filename, 'r')
-                    out_file_hstates = open(out_filename_hstates, 'a+')
-                    out_file_hstates.write(temp_file.read())
-                    out_file_hstates.close()
-                    temp_file.close()
-                    # Then do the same thing for the scalars
+
+                    # Only save hidden states if enabled (they are very large)
+                    if hstate is not None:
+                        out_filename_hstates = os.path.join(run_out_path, 'hstates_{}_{}_{}.csv'.format(increment, agent_n, i))
+                        np.savetxt(temp_filename,
+                                   hstate[:, i, :], delimiter=',')
+                        temp_file = open(temp_filename, 'r')
+                        out_file_hstates = open(out_filename_hstates, 'a+')
+                        out_file_hstates.write(temp_file.read())
+                        out_file_hstates.close()
+                        temp_file.close()
+                        print('Writing log file', out_filename_hstates)
+
+                    # Always save scalars
                     out_filename_scalars = os.path.join(run_out_path, 'scalars_{}_{}_{}.csv'.format(increment, agent_n, i))
                     np.savetxt(temp_filename,
                                scalars[:, i, :], delimiter=',', fmt='%f',
@@ -891,7 +898,7 @@ def make_train(config, env):
                     out_file_scalars.write(temp_file.read())
                     temp_file.close()
                     out_file_scalars.close()
-                    print('Writing log file', out_filename_hstates)
+                    print('Writing log file', out_filename_scalars)
 
             # Add the specified field to the logging array
             # In seperate_ippo_rnn:
@@ -927,8 +934,11 @@ def make_train(config, env):
                 for field_to_log in fields_to_log:
                     log_array = add_field_to_log_array(traj_batch.info, log_array, field_to_log, agent_n)
 
-                # Extract hidden states only for this agent: (T, NUM_ENVS, hidden_dim)
-                agent_hidden_states = hidden_states[:, agent_n, :, :]
+                # Extract hidden states only for this agent if saving is enabled
+                if save_hstates:
+                    agent_hidden_states = hidden_states[:, agent_n, :, :]
+                else:
+                    agent_hidden_states = None
                 jax.debug.callback(write_rnn_hstate, agent_hidden_states, log_array, update_step, agent_n)
 
             return (runner_state, episode_count), None
