@@ -12,6 +12,6 @@ pygame
 gymnax
 chex
 matplotlib
-imageio
+imageio[ffmpeg]
 jaxmarl
 seaborn
