@@ -946,19 +946,66 @@ def make_train(config, env):
             # Func to interleave update steps and plotting
 
         # ===========================
-        # Video Rollout Step
+        # Video frame buffer — frames are streamed to host via callback
+        # instead of being accumulated in GPU memory by jax.lax.scan.
         # ===========================
-        def _video_env_step(runner_state, unused):
-            """One env step that also renders ego + full_map frames for video."""
-            runner_state, transition = _env_step(runner_state, unused)
-            # Unwrap env_state: runner_state[1] is vmapped LogEnvState
-            # LogEnvState.env_state -> base craftax EnvState
-            # We take env 0 from the vmap batch for video
-            vmapped_env_state = runner_state[1]
-            craftax_state = jax.tree_util.tree_map(lambda x: x[0], vmapped_env_state.env_state)
+        _video_frame_buffer = {'ego': [], 'map': []}
+
+        def _collect_video_frame(ego_frame, map_frame):
+            """Host-side callback: appends one rendered frame (uint8) to the buffer."""
+            _video_frame_buffer['ego'].append(np.asarray(ego_frame).astype(np.uint8))
+            _video_frame_buffer['map'].append(np.asarray(map_frame).astype(np.uint8))
+
+        def _clear_video_buffer():
+            _video_frame_buffer['ego'].clear()
+            _video_frame_buffer['map'].clear()
+
+        # ===========================
+        # Video Rollout Step (single env — memory-efficient)
+        # ===========================
+        def _video_step_1env(runner_state, unused):
+            """One env step for a single environment for video recording.
+
+            Uses only 1 env instead of NUM_ENVS.  Rendered frames are streamed
+            to the host via jax.debug.callback so that jax.lax.scan does NOT
+            accumulate them in GPU memory (saves several GB).
+            """
+            train_state, env_state, last_obs, last_done, hstate, rng = runner_state
+
+            # SELECT ACTION
+            rng, _rng = jax.random.split(rng)
+            obs_batch = batchify(last_obs, env.agents)       # (num_agents, 1, obs_dim)
+            done_batch_in = batchify(last_done, env.agents)  # (num_agents, 1)
+
+            def forward_single_agent(params, hs, obs, done):
+                ac_in = (obs[np.newaxis, :], done[np.newaxis, :])
+                return network.apply({"params": params}, hs, ac_in)
+
+            hstate, pi, value, aux_pred = jax.vmap(forward_single_agent)(
+                train_state.params,
+                hstate,          # (num_agents, 1, hidden_dim)
+                obs_batch,       # (num_agents, 1, obs_dim)
+                done_batch_in,   # (num_agents, 1)
+            )
+
+            action = pi.sample(seed=_rng)    # (num_agents, 1, 1)
+            action = action.squeeze(axis=1)  # (num_agents, 1)
+
+            # Note: no extra squeeze on env_act values — keeps the (1,) batch dim for vmap
+            env_act = unbatchify(action, env.agents)  # {agent: (1,)}
+
+            # STEP 1 env
+            rng, _rng = jax.random.split(rng)
+            rng_step = jax.random.split(_rng, 1)
+            obsv, env_state, reward, done, info = jax.vmap(
+                env.step, in_axes=(0, 0, 0)
+            )(rng_step, env_state, env_act)
+
+            # Render the single env
+            craftax_state = jax.tree_util.tree_map(lambda x: x[0], env_state.env_state)
 
             # Render ego-perspective: (num_agents, H, W, 3) float32 [0, 255]
-            ego_frames = render_ego_perspective(
+            ego_frame = render_ego_perspective(
                 craftax_state, _video_pixel_size, _video_static_params,
                 _video_player_textures, _video_env_name
             )
@@ -970,7 +1017,12 @@ def make_train(config, env):
                 _video_pixel_size, env_name=_video_env_name
             )
 
-            return runner_state, (ego_frames, full_map_frame)
+            # Stream frame to host immediately — NOT accumulated by scan
+            # io_callback guarantees execution order and is not optimised away
+            jax.experimental.io_callback(_collect_video_frame, None, ego_frame, full_map_frame)
+
+            runner_state = (train_state, env_state, obsv, done, hstate, rng)
+            return runner_state, None
 
         def _update_plot(runner_state, unused):
             # First, do iterations of logging
@@ -986,70 +1038,79 @@ def make_train(config, env):
             # ===========================
             # Video Rollout (fresh episode so we see the overworld spawn)
             # ===========================
-            video_length = config.get("VIDEO_LENGTH", 200)
+            if config.get("SAVE_VIDEO", False):
+                video_length = config.get("VIDEO_LENGTH", 200)
 
-            # Unpack training state
-            train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_v = state
+                # Unpack training state
+                train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_v = state
 
-            # Fork RNG: one for video, one to continue training
-            rng_video, rng_continue = jax.random.split(rng_v)
+                # Fork RNG: one for video, one to continue training
+                rng_video, rng_continue = jax.random.split(rng_v)
 
-            # Reset envs to get a fresh episode (overworld, level 0)
-            video_reset_rngs = jax.random.split(rng_video, config["NUM_ENVS"])
-            video_obsv, video_env_state = jax.vmap(env.reset, in_axes=(0,))(video_reset_rngs)
+                # Reset only 1 env for video (saves ~NUM_ENVS × video_length env-state memory)
+                video_reset_rngs = jax.random.split(rng_video, 1)
+                video_obsv, video_env_state = jax.vmap(env.reset, in_axes=(0,))(video_reset_rngs)
 
-            # Fresh hidden states and done flags (zeros, matching structure)
-            video_hstate = jnp.zeros_like(hstate_v)
-            video_done = jax.tree_util.tree_map(jnp.zeros_like, done_v)
+                # Fresh hidden state (1 env) and done flags
+                video_hstate = jnp.zeros((env.num_agents, 1, config["GRU_HIDDEN_DIM"]))
+                video_done = {a: jnp.zeros((1,), dtype=bool) for a in env.agents}
+                video_done["__all__"] = jnp.zeros((1,), dtype=bool)
 
-            # Build video runner state (uses current policy weights)
-            rng_video2, _ = jax.random.split(rng_video)
-            video_runner = (train_state_v, video_env_state, video_obsv, video_done, video_hstate, rng_video2)
+                # Build video runner state (uses current policy weights)
+                rng_video2, _ = jax.random.split(rng_video)
+                video_runner = (train_state_v, video_env_state, video_obsv, video_done, video_hstate, rng_video2)
 
-            # Run video rollout — result state is discarded
-            _, (ego_frames, full_map_frames) = jax.lax.scan(
-                _video_env_step, video_runner, None, video_length
-            )
+                # Clear host-side frame buffer before video rollout
+                jax.experimental.io_callback(_clear_video_buffer, None)
 
-            # Restore training state with updated RNG (video state discarded)
-            state = (train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_continue)
+                # Run video rollout — frames are streamed to host via callback,
+                # scan output is None (no GPU memory accumulation)
+                _, _ = jax.lax.scan(
+                    _video_step_1env, video_runner, None, video_length
+                )
 
-            # ego_frames: (VIDEO_LENGTH, num_agents, H, W, 3)
-            # full_map_frames: (VIDEO_LENGTH, map_H, map_W, 3)
+                # Restore training state with updated RNG (video state discarded)
+                state = (train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_continue)
 
-            def save_video_callback(ego_frames, full_map_frames, step):
-                run_out_path = os.path.join('./', wandb.run.id, 'videos')
-                os.makedirs(run_out_path, exist_ok=True)
-                step_int = int(step)
+                def save_video_from_buffer(step):
+                    """Assemble streamed frames from buffer and save as video files."""
+                    step_int = int(step)
+                    if not _video_frame_buffer['ego']:
+                        print(f'Warning: No video frames collected at step {step_int}, skipping video save.')
+                        return
+                    run_out_path = os.path.join('./', wandb.run.id, 'videos')
+                    os.makedirs(run_out_path, exist_ok=True)
 
-                # Save per-agent ego videos
-                num_agents = ego_frames.shape[1]
-                wandb_videos = {}
-                for agent_idx in range(num_agents):
-                    agent_frames = np.asarray(ego_frames[:, agent_idx]).astype(np.uint8)
-                    video_path = os.path.join(run_out_path, f'ego_agent_{agent_idx}_{step_int}.mp4')
+                    ego_frames = np.stack(_video_frame_buffer['ego'])    # (T, num_agents, H, W, 3) uint8
+                    full_map_frames = np.stack(_video_frame_buffer['map'])  # (T, map_H, map_W, 3) uint8
+
+                    # Save per-agent ego videos
+                    num_agents = ego_frames.shape[1]
+                    wandb_videos = {}
+                    for agent_idx in range(num_agents):
+                        agent_frames = ego_frames[:, agent_idx]  # already uint8
+                        video_path = os.path.join(run_out_path, f'ego_agent_{agent_idx}_{step_int}.mp4')
+                        try:
+                            imageio.mimsave(video_path, agent_frames, fps=15, macro_block_size=1)
+                            wandb_videos[f"video/ego_agent_{agent_idx}"] = wandb.Video(video_path, fps=15, format="mp4")
+                            print(f'Saved ego video: {video_path}')
+                        except Exception as e:
+                            print(f'Failed to save ego video for agent {agent_idx}: {e}')
+
+                    # Save full map video
+                    fullmap_path = os.path.join(run_out_path, f'full_map_{step_int}.mp4')
                     try:
-                        imageio.mimsave(video_path, agent_frames, fps=15, macro_block_size=1)
-                        wandb_videos[f"video/ego_agent_{agent_idx}"] = wandb.Video(video_path, fps=15, format="mp4")
-                        print(f'Saved ego video: {video_path}')
+                        imageio.mimsave(fullmap_path, full_map_frames, fps=15, macro_block_size=1)
+                        wandb_videos["video/full_map"] = wandb.Video(fullmap_path, fps=15, format="mp4")
+                        print(f'Saved full map video: {fullmap_path}')
                     except Exception as e:
-                        print(f'Failed to save ego video for agent {agent_idx}: {e}')
+                        print(f'Failed to save full map video: {e}')
 
-                # Save full map video
-                full_map_np = np.asarray(full_map_frames).astype(np.uint8)
-                fullmap_path = os.path.join(run_out_path, f'full_map_{step_int}.mp4')
-                try:
-                    imageio.mimsave(fullmap_path, full_map_np, fps=15, macro_block_size=1)
-                    wandb_videos["video/full_map"] = wandb.Video(fullmap_path, fps=15, format="mp4")
-                    print(f'Saved full map video: {fullmap_path}')
-                except Exception as e:
-                    print(f'Failed to save full map video: {e}')
+                    # Log all videos to wandb in one call
+                    if wandb_videos:
+                        wandb.log(wandb_videos, step=step_int)
 
-                # Log all videos to wandb in one call
-                if wandb_videos:
-                    wandb.log(wandb_videos, step=step_int)
-
-            jax.debug.callback(save_video_callback, ego_frames, full_map_frames, update_steps)
+                jax.experimental.io_callback(save_video_from_buffer, None, update_steps)
 
             runner_state = (state, update_steps)
 
