@@ -160,6 +160,8 @@ def make_train(config, env):
     config["NUM_UPDATES"] = (
         config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
     )
+    config["NUM_LOGGING_ITERS"] = config["NUM_UPDATES"] // config["LOGGING_UPDATES_INTERVAL"]
+    config["REMAINING_UPDATES"] = config["NUM_UPDATES"] % config["LOGGING_UPDATES_INTERVAL"]
     # Note: In separate IPPO, minibatching is done over NUM_ENVS per agent
     # Each minibatch has shape (num_steps, num_agents, num_envs // NUM_MINIBATCHES, ...)
     config["MINIBATCH_SIZE"] = config["NUM_ENVS"] // config["NUM_MINIBATCHES"]
@@ -173,6 +175,7 @@ def make_train(config, env):
     _video_player_textures = _video_rendering_res["load_player_specific_textures"](
         _video_textures[_video_pixel_size], _video_static_params.player_count
     )
+    _video_max_length = int(config.get("MAX_VIDEO_LENGTH", -1))
 
     env = LogWrapper(env)
     env = VideoPlotWrapper(env, './output/', 256, False)
@@ -797,7 +800,7 @@ def make_train(config, env):
                 print(to_log)
                 wandb.log(to_log, step=metrics["update_steps"])
 
-            jax.experimental.io_callback(callback, None, metric, train_state, update_steps)
+            jax.experimental.io_callback(callback, None, metric, train_state, update_steps, ordered=True)
             update_steps = update_steps + 1
             runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
             return (runner_state, update_steps), metric
@@ -939,7 +942,9 @@ def make_train(config, env):
                     agent_hidden_states = hidden_states[:, agent_n, :, :]
                 else:
                     agent_hidden_states = None
-                jax.debug.callback(write_rnn_hstate, agent_hidden_states, log_array, update_step, agent_n)
+                jax.experimental.io_callback(
+                    write_rnn_hstate, None, agent_hidden_states, log_array, update_step, agent_n, ordered=True
+                )
 
             return (runner_state, episode_count), None
 
@@ -953,6 +958,8 @@ def make_train(config, env):
 
         def _collect_video_frame(ego_frame, map_frame):
             """Host-side callback: appends one rendered frame (uint8) to the buffer."""
+            if _video_max_length > 0 and len(_video_frame_buffer['ego']) >= _video_max_length:
+                return
             _video_frame_buffer['ego'].append(np.asarray(ego_frame).astype(np.uint8))
             _video_frame_buffer['map'].append(np.asarray(map_frame).astype(np.uint8))
 
@@ -1016,10 +1023,12 @@ def make_train(config, env):
                 _video_textures[_video_pixel_size], _video_player_textures,
                 _video_pixel_size, env_name=_video_env_name
             )
+            ego_frame = ego_frame.astype(jnp.uint8)
+            full_map_frame = full_map_frame.astype(jnp.uint8)
 
             # Stream frame to host immediately — NOT accumulated by scan
             # io_callback guarantees execution order and is not optimised away
-            jax.experimental.io_callback(_collect_video_frame, None, ego_frame, full_map_frame)
+            jax.experimental.io_callback(_collect_video_frame, None, ego_frame, full_map_frame, ordered=True)
 
             runner_state = (train_state, env_state, obsv, done, hstate, rng)
             return runner_state, None
@@ -1039,7 +1048,9 @@ def make_train(config, env):
             # Video Rollout (fresh episode so we see the overworld spawn)
             # ===========================
             if config.get("SAVE_VIDEO", False):
-                video_length = config.get("VIDEO_LENGTH", 200)
+                video_length = int(config.get("VIDEO_LENGTH", 200))
+                if _video_max_length > 0:
+                    video_length = min(video_length, _video_max_length)
 
                 # Unpack training state
                 train_state_v, env_state_v, obsv_v, done_v, hstate_v, rng_v = state
@@ -1061,7 +1072,7 @@ def make_train(config, env):
                 video_runner = (train_state_v, video_env_state, video_obsv, video_done, video_hstate, rng_video2)
 
                 # Clear host-side frame buffer before video rollout
-                jax.experimental.io_callback(_clear_video_buffer, None)
+                jax.experimental.io_callback(_clear_video_buffer, None, ordered=True)
 
                 # Run video rollout — frames are streamed to host via callback,
                 # scan output is None (no GPU memory accumulation)
@@ -1074,7 +1085,7 @@ def make_train(config, env):
 
                 def save_video_from_buffer(step):
                     """Assemble streamed frames from buffer and save as video files."""
-                    step_int = int(step)
+                    step_int = int(np.asarray(step).flat[0])
                     if not _video_frame_buffer['ego']:
                         print(f'Warning: No video frames collected at step {step_int}, skipping video save.')
                         return
@@ -1109,8 +1120,9 @@ def make_train(config, env):
                     # Log all videos to wandb in one call
                     if wandb_videos:
                         wandb.log(wandb_videos, step=step_int)
+                    _clear_video_buffer()
 
-                jax.experimental.io_callback(save_video_from_buffer, None, update_steps)
+                jax.experimental.io_callback(save_video_from_buffer, None, update_steps, ordered=True)
 
             runner_state = (state, update_steps)
 
@@ -1155,10 +1167,20 @@ def make_train(config, env):
             init_hstate,
             _rng,
         )
-        runner_state, metric = jax.lax.scan(
-            _update_plot, (runner_state, 0), None, config["NUM_UPDATES"]
-        )
-        return {"runner_state": runner_state}
+        if config["NUM_LOGGING_ITERS"] > 0:
+            runner_state, metric = jax.lax.scan(
+                _update_plot, (runner_state, 0), None, config["NUM_LOGGING_ITERS"]
+            )
+            update_runner_state = runner_state
+        else:
+            metric = None
+            update_runner_state = (runner_state, 0)
+        # Finish any leftover updates without an extra logging/video phase.
+        if config["REMAINING_UPDATES"] > 0:
+            update_runner_state, _ = jax.lax.scan(
+                _update_step, update_runner_state, None, config["REMAINING_UPDATES"]
+            )
+        return {"runner_state": update_runner_state}
 
     return train
 
@@ -1185,9 +1207,15 @@ def single_run(config):
 
     rng = jax.random.PRNGKey(config["SEED"])
 
-    rngs = jax.random.split(rng, config["NUM_SEEDS"])
-    train_vjit = jax.jit(jax.vmap(make_train(config, env)))
-    outs = jax.block_until_ready(train_vjit(rngs))
+    if config["NUM_SEEDS"] == 1:
+        train_jit = jax.jit(make_train(config, env))
+        outs = jax.block_until_ready(train_jit(rng))
+    else:
+        # Host callbacks (wandb/file/video logging) under vmap have non-trivial semantics.
+        # Keep multi-seed mode explicit to avoid silently interleaved side effects.
+        raise ValueError(
+            "seperate_ippo_rnn currently supports NUM_SEEDS == 1 for reliable logging/video callbacks."
+        )
 
 
 def main():

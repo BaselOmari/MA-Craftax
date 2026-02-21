@@ -2,7 +2,7 @@
 WANDB_MODE: "online" # Change to "online" for logging and include appropriate ENTITY and PROJECT arguments
 ENTITY: ""
 PROJECT: ""
-RUN_NAME: "IPPO - Base"
+RUN_NAME: "IPPO - new_log"
 
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
@@ -33,12 +33,12 @@ LR_WARMUP: 0.0
 REW_SHAPING_HORIZON: 1000000
 
 # Seed configuration
-NUM_SEEDS: 1
+NUM_SEEDS: 1 #careful with this > 1 - might break something in the logging code
 SEED: 0
 
 # Logging configuration
-LOGGING_UPDATES_INTERVAL: 2000  # Number of updates between logging phases
-LOGGING_NUM_CALLS: 3          # Number of logging_step calls per phase
+LOGGING_UPDATES_INTERVAL: 1500  # Number of updates between logging phases
+LOGGING_NUM_CALLS: 25          # Number of logging_step calls per phase
 LOGGING_STEPS_PER_CALL: 1024  # Number of env steps per logging_step call
 LOGGING_THREADS: 1            # Number of env threads to log
 
