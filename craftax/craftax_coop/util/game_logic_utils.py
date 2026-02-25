@@ -146,7 +146,7 @@ def attack_mob(state, doing_attack, position, damage_vector, can_eat):
 
     new_food = jnp.where(
         jnp.logical_and(did_kill_passive_mob, can_eat),
-        jnp.minimum(get_max_food(state), state.player_food + 6),
+        jnp.minimum(get_max_food(state), state.player_food + 3),
         state.player_food,
     )
     new_hunger = jnp.where(
