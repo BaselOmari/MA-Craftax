@@ -161,3 +161,6 @@ class StaticEnvParams:
     max_ranged_mobs: int = 1
     max_mob_projectiles: int = 3
     max_player_projectiles: int = 3
+
+    # Rate at which player hunger increases per tick (multiplied with base rate)
+    hunger_increase_rate: float = 1.0

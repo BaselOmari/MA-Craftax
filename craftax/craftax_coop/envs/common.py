@@ -26,6 +26,19 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     # Add team kill metrics (broadcast to match player dimension)
     info["Combat/team_a_kills"] = jnp.full(static_params.player_count, state.team_kills[0], dtype=jnp.float32)
     info["Combat/team_b_kills"] = jnp.full(static_params.player_count, state.team_kills[1], dtype=jnp.float32)
+    info["Movement/walking_distance"] = state.walking_distance.astype(jnp.float32)
+    info["Combat/damage_taken_total"] = state.damage_taken_total.astype(jnp.float32)
+    info["Combat/damage_taken_melee"] = state.damage_taken_melee.astype(jnp.float32)
+    info["Combat/damage_taken_ranged"] = state.damage_taken_ranged.astype(jnp.float32)
+    info["Combat/damage_taken_health"] = state.damage_taken_health.astype(jnp.float32)
+    info["Combat/damage_taken_health_food"] = state.damage_taken_health_food.astype(jnp.float32)
+    info["Combat/damage_taken_health_drink"] = state.damage_taken_health_drink.astype(jnp.float32)
+    info["Combat/damage_taken_health_energy"] = state.damage_taken_health_energy.astype(jnp.float32)
+    info["Combat/damage_taken_health_other"] = state.damage_taken_health_other.astype(jnp.float32)
+    info["Combat/damage_taken_ff"] = state.damage_taken_ff.astype(jnp.float32)
+    info["Necessities/ticks_food_empty"] = state.ticks_food_empty.astype(jnp.float32)
+    info["Necessities/ticks_drink_empty"] = state.ticks_drink_empty.astype(jnp.float32)
+    info["Necessities/ticks_energy_empty"] = state.ticks_energy_empty.astype(jnp.float32)
     
     return info
 

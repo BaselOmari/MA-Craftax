@@ -71,39 +71,44 @@ def render_craftax_symbolic(state: EnvState, static_params: StaticEnvParams):
 
         return (mob_map, mobs, mob_class_index), None
 
-    (mob_map, _, _), _ = jax.lax.scan(
-        _add_mob_to_map,
-        (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.melee_mobs), 0),
-        jnp.arange(state.melee_mobs.mask.shape[1]),
-    )
-    (mob_map, _, _), _ = jax.lax.scan(
-        _add_mob_to_map,
-        (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.passive_mobs), 1),
-        jnp.arange(state.passive_mobs.mask.shape[1]),
-    )
-    (mob_map, _, _), _ = jax.lax.scan(
-        _add_mob_to_map,
-        (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.ranged_mobs), 2),
-        jnp.arange(state.ranged_mobs.mask.shape[1]),
-    )
-    (mob_map, _, _), _ = jax.lax.scan(
-        _add_mob_to_map,
-        (
-            mob_map,
-            jax.tree_util.tree_map(lambda x: x[state.player_level], state.mob_projectiles),
-            3,
-        ),
-        jnp.arange(state.mob_projectiles.mask.shape[1]),
-    )
-    (mob_map, _, _), _ = jax.lax.scan(
-        _add_mob_to_map,
-        (
-            mob_map,
-            jax.tree_util.tree_map(lambda x: x[state.player_level], state.player_projectiles),
-            4,
-        ),
-        jnp.arange(state.player_projectiles.mask.shape[1]),
-    )
+    if state.melee_mobs.mask.shape[1] > 0:
+        (mob_map, _, _), _ = jax.lax.scan(
+            _add_mob_to_map,
+            (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.melee_mobs), 0),
+            jnp.arange(state.melee_mobs.mask.shape[1]),
+        )
+    if state.passive_mobs.mask.shape[1] > 0:
+        (mob_map, _, _), _ = jax.lax.scan(
+            _add_mob_to_map,
+            (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.passive_mobs), 1),
+            jnp.arange(state.passive_mobs.mask.shape[1]),
+        )
+    if state.ranged_mobs.mask.shape[1] > 0:
+        (mob_map, _, _), _ = jax.lax.scan(
+            _add_mob_to_map,
+            (mob_map, jax.tree_util.tree_map(lambda x: x[state.player_level], state.ranged_mobs), 2),
+            jnp.arange(state.ranged_mobs.mask.shape[1]),
+        )
+    if state.mob_projectiles.mask.shape[1] > 0:
+        (mob_map, _, _), _ = jax.lax.scan(
+            _add_mob_to_map,
+            (
+                mob_map,
+                jax.tree_util.tree_map(lambda x: x[state.player_level], state.mob_projectiles),
+                3,
+            ),
+            jnp.arange(state.mob_projectiles.mask.shape[1]),
+        )
+    if state.player_projectiles.mask.shape[1] > 0:
+        (mob_map, _, _), _ = jax.lax.scan(
+            _add_mob_to_map,
+            (
+                mob_map,
+                jax.tree_util.tree_map(lambda x: x[state.player_level], state.player_projectiles),
+                4,
+            ),
+            jnp.arange(state.player_projectiles.mask.shape[1]),
+        )
 
     def reorder_teammate_info(teammate_info, player_index):
         i1 = (jnp.arange(static_params.player_count) == 0) * player_index

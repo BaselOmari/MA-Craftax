@@ -220,25 +220,43 @@ def render_full_map(state, static_params, textures, player_specific_textures, bl
         return (pixels, mobs, texture_name, alpha_texture_name), None
     
     # Melee mobs
-    (map_pixels, _, _, _), _ = jax.lax.scan(
-        _add_mob_to_pixels,
-        (map_pixels, state.melee_mobs, textures["melee_mob_textures"], textures["melee_mob_texture_alphas"]),
-        jnp.arange(state.melee_mobs.mask.shape[1]),
-    )
+    if state.melee_mobs.mask.shape[1] > 0:
+        (map_pixels, _, _, _), _ = jax.lax.scan(
+            _add_mob_to_pixels,
+            (
+                map_pixels,
+                state.melee_mobs,
+                textures["melee_mob_textures"],
+                textures["melee_mob_texture_alphas"],
+            ),
+            jnp.arange(state.melee_mobs.mask.shape[1]),
+        )
     
     # Passive mobs
-    (map_pixels, _, _, _), _ = jax.lax.scan(
-        _add_mob_to_pixels,
-        (map_pixels, state.passive_mobs, textures["passive_mob_textures"], textures["passive_mob_texture_alphas"]),
-        jnp.arange(state.passive_mobs.mask.shape[1]),
-    )
+    if state.passive_mobs.mask.shape[1] > 0:
+        (map_pixels, _, _, _), _ = jax.lax.scan(
+            _add_mob_to_pixels,
+            (
+                map_pixels,
+                state.passive_mobs,
+                textures["passive_mob_textures"],
+                textures["passive_mob_texture_alphas"],
+            ),
+            jnp.arange(state.passive_mobs.mask.shape[1]),
+        )
     
     # Ranged mobs
-    (map_pixels, _, _, _), _ = jax.lax.scan(
-        _add_mob_to_pixels,
-        (map_pixels, state.ranged_mobs, textures["ranged_mob_textures"], textures["ranged_mob_texture_alphas"]),
-        jnp.arange(state.ranged_mobs.mask.shape[1]),
-    )
+    if state.ranged_mobs.mask.shape[1] > 0:
+        (map_pixels, _, _, _), _ = jax.lax.scan(
+            _add_mob_to_pixels,
+            (
+                map_pixels,
+                state.ranged_mobs,
+                textures["ranged_mob_textures"],
+                textures["ranged_mob_texture_alphas"],
+            ),
+            jnp.arange(state.ranged_mobs.mask.shape[1]),
+        )
     
     # Apply lighting (underground darkness)
     light_map = state.light_map[state.player_level]

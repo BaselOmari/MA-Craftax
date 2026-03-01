@@ -14,7 +14,7 @@ FC_DIM_SIZE: 128
 ACTIVATION: "tanh"
 
 # Training parameters
-TOTAL_TIMESTEPS: 1.5e+9
+TOTAL_TIMESTEPS: 1000000000
 NUM_ENVS: 512
 NUM_STEPS: 64
 NUM_MINIBATCHES: 8
@@ -38,7 +38,7 @@ SEED: 0
 
 # Logging configuration
 LOGGING_UPDATES_INTERVAL: 1500  # Number of updates between logging phases
-LOGGING_NUM_CALLS: 25          # Number of logging_step calls per phase
+LOGGING_NUM_CALLS: 20          # Number of logging_step calls per phase
 LOGGING_STEPS_PER_CALL: 1024  # Number of env steps per logging_step call
 LOGGING_THREADS: 1            # Number of env threads to log
 

@@ -769,6 +769,54 @@ def make_train(config, env):
                         for key, values in team_b_achievements.items():
                             if values:
                                 to_log[f"team_b/{key}"] = np.mean(values)
+
+                    # Explicit team summaries for requested WandB panels
+                    if team_a_achievements.get("Movement/walking_distance"):
+                        to_log["team_a/avg_walking_distance"] = np.mean(
+                            team_a_achievements["Movement/walking_distance"]
+                        )
+                    if team_b_achievements.get("Movement/walking_distance"):
+                        to_log["team_b/avg_walking_distance"] = np.mean(
+                            team_b_achievements["Movement/walking_distance"]
+                        )
+
+                    damage_keys = [
+                        "Combat/damage_taken_total",
+                        "Combat/damage_taken_melee",
+                        "Combat/damage_taken_ranged",
+                        "Combat/damage_taken_health",
+                        "Combat/damage_taken_health_food",
+                        "Combat/damage_taken_health_drink",
+                        "Combat/damage_taken_health_energy",
+                        "Combat/damage_taken_health_other",
+                        "Combat/damage_taken_ff",
+                    ]
+                    for damage_key in damage_keys:
+                        metric_name = damage_key.split("/")[-1]
+                        if team_a_achievements.get(damage_key):
+                            to_log[f"team_a/{metric_name}"] = np.mean(
+                                team_a_achievements[damage_key]
+                            )
+                        if team_b_achievements.get(damage_key):
+                            to_log[f"team_b/{metric_name}"] = np.mean(
+                                team_b_achievements[damage_key]
+                            )
+
+                    necessity_keys = [
+                        "Necessities/ticks_food_empty",
+                        "Necessities/ticks_drink_empty",
+                        "Necessities/ticks_energy_empty",
+                    ]
+                    for nec_key in necessity_keys:
+                        metric_name = nec_key.split("/")[-1]
+                        if team_a_achievements.get(nec_key):
+                            to_log[f"team_a/{metric_name}"] = np.mean(
+                                team_a_achievements[nec_key]
+                            )
+                        if team_b_achievements.get(nec_key):
+                            to_log[f"team_b/{metric_name}"] = np.mean(
+                                team_b_achievements[nec_key]
+                            )
                     
                     # Log team-specific trade and combat metrics
                     # Note: same_subclass_trades tracks trades within teams (Team A with Team A, Team B with Team B)

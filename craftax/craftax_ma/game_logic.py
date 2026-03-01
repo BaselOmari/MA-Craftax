@@ -2117,7 +2117,7 @@ def update_player_intrinsics(state, action, static_params):
         state.is_sleeping, 
         0.5, 
         1.0,
-    ) * intrinsic_decay_coeff
+    ) * intrinsic_decay_coeff * static_params.hunger_increase_rate
     new_hunger = state.player_hunger + hunger_add
 
     hungered_food = jnp.maximum(state.player_food - 1 * not_boss, 0)

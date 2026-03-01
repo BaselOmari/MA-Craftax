@@ -25,7 +25,7 @@ TEXTURE_CACHE_FILE = os.path.join(
 REQUEST_MAX_DURATION = 10
 
 # DUNGEON ROOM CONSTANTS
-NUM_ROOMS = 16
+NUM_ROOMS = 24
 MIN_ROOM_SIZE = 5
 MAX_ROOM_SIZE = 10
 
@@ -69,6 +69,7 @@ class BlockType(Enum):
     GRAVE2 = 34
     GRAVE3 = 35
     NECROMANCER_VULNERABLE = 36
+    SNAIL_SPAWN = 37
 
 
 class ItemType(Enum):
@@ -154,8 +155,8 @@ def avail_actions_fn(num_agents):
         1,  # 15: MAKE_STONE_SWORD ✅
         0,  # 16: MAKE_IRON_SWORD ❌
         1,  # 17: REST ✅
-        1,  # 18: DESCEND ✅
-        1,  # 19: ASCEND ✅
+        0,  # 18: DESCEND ❌ (disabled — single-level environment)
+        0,  # 19: ASCEND ❌ (disabled — single-level environment)
         0,  # 20: MAKE_DIAMOND_PICKAXE ❌
         0,  # 21: MAKE_DIAMOND_SWORD ❌
         0,  # 22: MAKE_IRON_ARMOUR ❌
@@ -247,9 +248,9 @@ FLOOR_MOB_SPAWN_CHANCE = jnp.array(
     [
         # (passive, melee, ranged, melee-night)
         jnp.array([0.1, 0.02, 0.05, 0.1]),  # Floor 0 (overworld)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 1 (gnomish mines)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 2 (dungeon)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 3 (sewers)
+        jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 1 (gnomish mines)
+        jnp.array([0.0175, 0.0145, 0.0125, 0.0]), # Floor 2 (dungeon)
+        jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 3 (sewers)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 4 (vaults)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 5 (troll mines)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 6 (fire)
@@ -351,7 +352,7 @@ MOB_TYPE_DAMAGE_MAPPING = jnp.array(
         # (-, melee, -, projectile)
         [NO_DAMAGE, [2, 0, 0], NO_DAMAGE, [2, 0, 0]],  # zombie, arrow
         [NO_DAMAGE, [4, 0, 0], NO_DAMAGE, [4, 0, 0]],  # gnome, dagger
-        [NO_DAMAGE, [3, 0, 0], NO_DAMAGE, [0, 3, 0]],  # orc, fireball
+        [NO_DAMAGE, [0.75, 0, 0], NO_DAMAGE, [0, 0.75, 0]],  # orc, fireball (quartered)
         [NO_DAMAGE, [5, 0, 0], NO_DAMAGE, [0, 0, 3]],  # lizard, iceball
         [NO_DAMAGE, [6, 0, 0], NO_DAMAGE, [5, 0, 0]],  # knight, arrow2
         [NO_DAMAGE, [6, 1, 1], NO_DAMAGE, [4, 3, 3]],  # troll, slimeball
@@ -366,7 +367,7 @@ MOB_TYPE_HEALTH_MAPPING = jnp.array(
         # (passive, melee, ranged, -)
         jnp.array([3, 5, 3, 0]),  # Floor 0 (overworld)
         jnp.array([4, 7, 5, 0]),  # Floor 1 (gnomish mines)
-        jnp.array([6, 9, 6, 0]),  # Floor 2 (dungeon)
+        jnp.array([3, 4.5, 3, 0]),  # Floor 2 (dungeon)
         jnp.array([8, 11, 8, 0]),  # Floor 3 (sewers)
         jnp.array([0, 12, 12, 0]),  # Floor 4 (vaults)
         jnp.array([0, 20, 4, 0]),  # Floor 5 (troll mines)
@@ -822,6 +823,17 @@ def load_request_message_textures(block_pixel_size):
     ])
 
 
+def _compose_snail_spawn_texture(path_tex, snail_overlay):
+    # Some assets are RGB-only. In that case, use the overlay directly.
+    if snail_overlay.shape[-1] == 4:
+        snail_alpha = jnp.repeat(
+            jnp.expand_dims(snail_overlay[:, :, 3], axis=-1), 3, axis=-1
+        )
+        return path_tex[:, :, :3] * (1 - snail_alpha) + snail_overlay[:, :, :3] * snail_alpha
+
+    return snail_overlay[:, :, :3]
+
+
 def load_all_textures(block_pixel_size):
     small_block_pixel_size = int(block_pixel_size * 0.8)
 
@@ -864,6 +876,7 @@ def load_all_textures(block_pixel_size):
         "grave2.png",
         "grave3.png",
         "necromancer_vulnerable.png",
+        "path_moss.png",  # SNAIL_SPAWN - mossy path marks snail spawn points
     ]
 
     block_textures = jnp.array(
@@ -880,12 +893,27 @@ def load_all_textures(block_pixel_size):
     block_textures = block_textures.at[BlockType.DARKNESS.value].set(
         jnp.zeros((block_pixel_size, block_pixel_size, 3), dtype=jnp.int32)
     )
+    # Compose SNAIL_SPAWN from path base + moss overlay (RGBA) or direct RGB overlay.
+    _path_tex = load_texture("path.png", block_pixel_size)
+    _snail_overlay = load_texture("path_moss.png", block_pixel_size)
+    _snail_spawn_tex = _compose_snail_spawn_texture(_path_tex, _snail_overlay)
+    block_textures = block_textures.at[BlockType.SNAIL_SPAWN.value].set(
+        _snail_spawn_tex.astype(jnp.int32)
+    )
 
     smaller_block_textures = jnp.array(
         [
             load_texture(fname, small_block_pixel_size)[:, :, :3]
             for fname in block_texture_names
         ]
+    )
+    _small_path_tex = load_texture("path.png", small_block_pixel_size)
+    _small_snail_overlay = load_texture("path_moss.png", small_block_pixel_size)
+    _small_snail_spawn_tex = _compose_snail_spawn_texture(
+        _small_path_tex, _small_snail_overlay
+    )
+    smaller_block_textures = smaller_block_textures.at[BlockType.SNAIL_SPAWN.value].set(
+        _small_snail_spawn_tex.astype(jnp.int32)
     )
 
     full_map_block_textures = jnp.array(
@@ -1338,17 +1366,46 @@ def load_all_textures(block_pixel_size):
     }
 
 
+def _is_texture_cache_stale(textures):
+    expected_block_count = len(BlockType)
+
+    for texture_set in textures.values():
+        if "block_textures" not in texture_set:
+            return True
+
+        block_textures = np.array(texture_set["block_textures"])
+        if block_textures.shape[0] != expected_block_count:
+            return True
+
+        # Detect old caches where SNAIL_SPAWN was accidentally identical to PATH.
+        if np.array_equal(
+            block_textures[BlockType.PATH.value],
+            block_textures[BlockType.SNAIL_SPAWN.value],
+        ):
+            return True
+
+    return False
+
+
+def _build_and_cache_textures():
+    print("Processing textures")
+    textures = {
+        BLOCK_PIXEL_SIZE_AGENT: load_all_textures(BLOCK_PIXEL_SIZE_AGENT),
+        BLOCK_PIXEL_SIZE_IMG: load_all_textures(BLOCK_PIXEL_SIZE_IMG),
+        BLOCK_PIXEL_SIZE_HUMAN: load_all_textures(BLOCK_PIXEL_SIZE_HUMAN),
+    }
+    save_compressed_pickle(TEXTURE_CACHE_FILE, textures)
+    print("Textures saved to cache")
+    return textures
+
+
 if os.path.exists(TEXTURE_CACHE_FILE) and not os.environ.get(
     "CRAFTAX_RELOAD_TEXTURES", False
 ):
     print("Loading textures from cache")
     TEXTURES = load_compressed_pickle(TEXTURE_CACHE_FILE)
+    if _is_texture_cache_stale(TEXTURES):
+        print("Texture cache is stale, rebuilding")
+        TEXTURES = _build_and_cache_textures()
 else:
-    print("Processing textures")
-    TEXTURES = {
-        BLOCK_PIXEL_SIZE_AGENT: load_all_textures(BLOCK_PIXEL_SIZE_AGENT),
-        BLOCK_PIXEL_SIZE_IMG: load_all_textures(BLOCK_PIXEL_SIZE_IMG),
-        BLOCK_PIXEL_SIZE_HUMAN: load_all_textures(BLOCK_PIXEL_SIZE_HUMAN),
-    }
-    save_compressed_pickle(TEXTURE_CACHE_FILE, TEXTURES)
-    print("Textures saved to cache")
+    TEXTURES = _build_and_cache_textures()

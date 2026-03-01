@@ -275,6 +275,7 @@ class DungeonConfig:
     fountain_block: int
     rare_path_replacement_block: int
     valid_ladder: int
+    fountain_probability: float
 
 
 DUNGEON_CONFIG = DungeonConfig(
@@ -282,6 +283,7 @@ DUNGEON_CONFIG = DungeonConfig(
     fountain_block=BlockType.FOUNTAIN.value,
     rare_path_replacement_block=BlockType.PATH.value,
     valid_ladder=BlockType.PATH.value,
+    fountain_probability=0.75,  # 1.5x default (0.5) for level 2 dungeon
 )
 
 SEWER_CONFIG = DungeonConfig(
@@ -289,6 +291,7 @@ SEWER_CONFIG = DungeonConfig(
     fountain_block=BlockType.WATER.value,
     rare_path_replacement_block=BlockType.WATER.value,
     valid_ladder=BlockType.PATH.value,
+    fountain_probability=0.5,
 )
 
 VAULTS_CONFIG = DungeonConfig(
@@ -296,6 +299,7 @@ VAULTS_CONFIG = DungeonConfig(
     fountain_block=BlockType.FOUNTAIN.value,
     rare_path_replacement_block=BlockType.PATH.value,
     valid_ladder=BlockType.PATH.value,
+    fountain_probability=0.5,
 )
 
 ALL_DUNGEON_CONFIGS = jax.tree_util.tree_map(

@@ -151,7 +151,7 @@ def generate_dungeon(rng, static_params, config):
             minval=jnp.ones(2),
             maxval=room_sizes[room_index] - jnp.ones(2),
         )
-        room_has_fountain = jax.random.uniform(__rng) > 0.5
+        room_has_fountain = jax.random.uniform(__rng) < config.fountain_probability
         fountain_block = (
             room_has_fountain * config.fountain_block
             + (1 - room_has_fountain)
@@ -294,22 +294,29 @@ def generate_dungeon(rng, static_params, config):
         + is_darkness_map * BlockType.DARKNESS.value
     )
 
+    # Scatter SNAIL_SPAWN tiles on ~5% of PATH tiles (food source markers)
+    rng, _rng = jax.random.split(rng)
+    is_path_tile = map == BlockType.PATH.value
+    snail_roll = jax.random.uniform(_rng, shape=static_params.map_size)
+    snail_spawn_frequency = jnp.clip(static_params.snail_spawn_tile_frequency, 0.0, 1.0)
+    make_snail_spawn = jnp.logical_and(is_path_tile, snail_roll < snail_spawn_frequency)
+    # Don't place on tiles that already have items (fountains, chests, etc.)
+    make_snail_spawn = jnp.logical_and(make_snail_spawn, item_map == ItemType.NONE.value)
+    map = jnp.where(make_snail_spawn, BlockType.SNAIL_SPAWN.value, map)
+
     light_map = jnp.ones(static_params.map_size, dtype=jnp.float32)
 
-    # Ladders
+    # Ladders — disabled (single-level environment, no floor changes)
     rng, _rng = jax.random.split(rng)
     ladders_down = get_ladder_positions(_rng, static_params, config, map)
-    item_map = item_map.at[ladders_down[:, 0], ladders_down[:, 1]].set(
-        ItemType.LADDER_DOWN.value
-    )
 
     rng, _rng = jax.random.split(rng)
     ladders_up = get_ladder_positions(_rng, static_params, config, map)
-    item_map = item_map.at[ladders_up[:, 0], ladders_up[:, 1]].set(
-        ItemType.LADDER_UP.value
-    )
 
-    return map, item_map, light_map, ladders_down, ladders_up
+    # Convert room positions from padded to unpadded coordinates
+    unpadded_room_positions = room_positions - MAX_ROOM_SIZE  # (NUM_ROOMS, 2)
+
+    return map, item_map, light_map, ladders_down, ladders_up, unpadded_room_positions, room_sizes
 
 
 def generate_smoothworld(rng, static_params, player_position, config, params=None):
@@ -514,9 +521,15 @@ def generate_world(rng, params, static_params):
     # Generate dungeons
     rngs = jax.random.split(rng, 4)
     rng, _rng = rngs[0], rngs[1:]
-    dungeons = jax.vmap(generate_dungeon, in_axes=(0, None, 0))(
+    dungeon_results = jax.vmap(generate_dungeon, in_axes=(0, None, 0))(
         _rng, static_params, ALL_DUNGEON_CONFIGS
     )
+    # Separate room metadata from map data
+    # dungeon_results = (maps, item_maps, light_maps, ladders_down, ladders_up, room_positions, room_sizes)
+    d_maps, d_item_maps, d_light_maps, d_ladders_down, d_ladders_up, dungeon_room_positions, dungeon_room_sizes = dungeon_results
+    dungeons = (d_maps, d_item_maps, d_light_maps, d_ladders_down, d_ladders_up)
+    # dungeon_room_positions: (3, NUM_ROOMS, 2) top-left corner of each room (unpadded)
+    # dungeon_room_sizes:     (3, NUM_ROOMS, 2) (height, width) of each room
 
     # Returns stacked versions of the map, item_map, light_map and ladders
     # 9 elements in each of these stacks representing each of the levels.
@@ -529,51 +542,97 @@ def generate_world(rng, params, static_params):
         dungeons,
     )
 
-    # --- Phase 2: Pick team spawn positions from PATH tiles on the start level ---
-    START_LEVEL = 2  # First dungeon level
-    start_map = map[START_LEVEL]  # (map_h, map_w)
+    # --- Phase 2: Pick team spawn positions inside ROOMS on the start level ---
+    START_LEVEL = 2  # First dungeon level (dungeon index 0)
+    start_room_positions = dungeon_room_positions[0]  # (NUM_ROOMS, 2) top-left corners
+    start_room_sizes = dungeon_room_sizes[0]          # (NUM_ROOMS, 2) (h, w)
 
-    # Build flat array of all PATH-tile coordinates on the start level
-    row_coords, col_coords = jnp.meshgrid(
-        jnp.arange(map_h), jnp.arange(map_w), indexing="ij"
-    )
-    all_coords = jnp.stack([row_coords.ravel(), col_coords.ravel()], axis=-1)  # (H*W, 2)
-    is_path = (start_map.ravel() == BlockType.PATH.value)  # (H*W,)
+    # Compute room centers
+    room_centers = start_room_positions + start_room_sizes // 2  # (NUM_ROOMS, 2)
 
-    # Team A: sample uniformly from PATH tiles
+    # Team A: pick a random room
     rng, rng_a, rng_b = jax.random.split(rng, 3)
-    path_probs_a = is_path.astype(jnp.float32)
-    path_probs_a = path_probs_a / jnp.maximum(path_probs_a.sum(), 1.0)
-    team_a_flat_idx = jax.random.choice(rng_a, all_coords.shape[0], p=path_probs_a)
-    team_a_center = all_coords[team_a_flat_idx]  # (2,)
+    room_probs_a = jnp.ones(NUM_ROOMS) / NUM_ROOMS
+    team_a_room_idx = jax.random.choice(rng_a, NUM_ROOMS, p=room_probs_a)
+    team_a_center = room_centers[team_a_room_idx]  # (2,)
 
-    # Team B: sample from PATH tiles that are >= min_team_spawn_distance from Team A
-    dists_from_a = jnp.sqrt(
-        ((all_coords - team_a_center).astype(jnp.float32) ** 2).sum(axis=-1)
+    # Team B: pick a room whose center is >= min_team_spawn_distance from Team A's room
+    dists_between_rooms = jnp.sqrt(
+        ((room_centers - team_a_center).astype(jnp.float32) ** 2).sum(axis=-1)
     )
-    far_enough = dists_from_a >= params.min_team_spawn_distance
-    path_probs_b = (is_path & far_enough).astype(jnp.float32)
-    has_valid = path_probs_b.sum() > 0
-    # Fallback: if no PATH tile is far enough, use all PATH tiles
-    path_probs_b = jnp.where(has_valid,
-                             path_probs_b / jnp.maximum(path_probs_b.sum(), 1.0),
-                             path_probs_a)
-    team_b_flat_idx = jax.random.choice(rng_b, all_coords.shape[0], p=path_probs_b)
-    team_b_center = all_coords[team_b_flat_idx]  # (2,)
+    far_enough = dists_between_rooms >= params.min_team_spawn_distance
+    room_probs_b = far_enough.astype(jnp.float32)
+    has_valid = room_probs_b.sum() > 0
+    # Fallback: if no room is far enough, use all rooms except Team A's
+    fallback_probs = jnp.ones(NUM_ROOMS).at[team_a_room_idx].set(0.0)
+    fallback_probs = fallback_probs / jnp.maximum(fallback_probs.sum(), 1.0)
+    room_probs_b = jnp.where(has_valid,
+                             room_probs_b / jnp.maximum(room_probs_b.sum(), 1.0),
+                             fallback_probs)
+    team_b_room_idx = jax.random.choice(rng_b, NUM_ROOMS, p=room_probs_b)
+    team_b_center = room_centers[team_b_room_idx]  # (2,)
 
-    # Assign each player to its team centre
-    def get_player_spawn(idx):
-        is_team_b = idx % 2  # 0 → Team A, 1 → Team B
-        center = jnp.where(is_team_b, team_b_center, team_a_center)
-        return center
-
-    player_position = jax.vmap(get_player_spawn)(
-        jnp.arange(0, static_params.player_count)
+    # Assign each player to a nearby tile in its team's room (avoid full stacking)
+    spawn_offsets = jnp.array(
+        [
+            [0, 0],
+            [1, 0],
+            [-1, 0],
+            [0, 1],
+            [0, -1],
+            [1, 1],
+            [-1, 1],
+            [1, -1],
+            [-1, -1],
+            [2, 0],
+            [-2, 0],
+            [0, 2],
+            [0, -2],
+        ],
+        dtype=jnp.int32,
     )
+    player_indices = jnp.arange(static_params.player_count, dtype=jnp.int32)
+    is_team_b = (player_indices % 2) == 1
+    team_a_slots = jnp.cumsum((1 - is_team_b.astype(jnp.int32))) - 1
+    team_b_slots = jnp.cumsum(is_team_b.astype(jnp.int32)) - 1
+    slot_indices = jnp.where(is_team_b, team_b_slots, team_a_slots) % spawn_offsets.shape[0]
 
-    # Force spawn tiles to PATH on the start level (clear the spot)
+    team_centers = jnp.where(
+        is_team_b[:, None], team_b_center[None, :], team_a_center[None, :]
+    )
+    raw_player_position = team_centers + spawn_offsets[slot_indices]
+
+    team_room_positions = jnp.where(
+        is_team_b[:, None],
+        start_room_positions[team_b_room_idx][None, :],
+        start_room_positions[team_a_room_idx][None, :],
+    )
+    team_room_sizes = jnp.where(
+        is_team_b[:, None],
+        start_room_sizes[team_b_room_idx][None, :],
+        start_room_sizes[team_a_room_idx][None, :],
+    )
+    room_min = team_room_positions
+    room_max = team_room_positions + team_room_sizes - 1
+    player_position = jnp.clip(raw_player_position, room_min, room_max)
+
+    # Force spawn tiles to PATH on the start level (clear the spots)
+    # Only overwrite if the current block is solid/would trap the player (wall, chest, etc.)
+    # Keep fountains and other non-blocking features intact.
+    spawn_blocks = map[START_LEVEL, player_position[:, 0], player_position[:, 1]]
+    is_solid_spawn = jnp.isin(spawn_blocks, jnp.array(SOLID_BLOCKS))
     map = map.at[START_LEVEL, player_position[:, 0], player_position[:, 1]].set(
-        BlockType.PATH.value
+        jnp.where(is_solid_spawn, BlockType.PATH.value, spawn_blocks)
+    )
+    # Only remove ladders from spawn tiles to prevent immediate floor transitions
+    spawn_items = item_map[START_LEVEL, player_position[:, 0], player_position[:, 1]]
+    is_ladder = jnp.isin(spawn_items, jnp.array([
+        ItemType.LADDER_DOWN.value,
+        ItemType.LADDER_UP.value,
+        ItemType.LADDER_DOWN_BLOCKED.value,
+    ]))
+    item_map = item_map.at[START_LEVEL, player_position[:, 0], player_position[:, 1]].set(
+        jnp.where(is_ladder, ItemType.NONE.value, spawn_items)
     )
 
     # Mobs
@@ -720,6 +779,19 @@ def generate_world(rng, params, static_params):
         revives=jnp.asarray(0, dtype=jnp.int32),
         ff_damage_dealt=jnp.asarray(0.0, dtype=jnp.float32),
         team_kills=jnp.zeros(2, dtype=jnp.int32),  # [team_a_kills, team_b_kills]
+        walking_distance=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_total=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_melee=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_ranged=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_health=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_health_food=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_health_drink=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_health_energy=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_health_other=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        damage_taken_ff=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        ticks_food_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        ticks_drink_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        ticks_energy_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         all_necessities_frac=jnp.ones((static_params.player_count,), dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),

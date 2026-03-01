@@ -151,7 +151,7 @@ def generate_dungeon(rng, static_params, config):
             minval=jnp.ones(2),
             maxval=room_sizes[room_index] - jnp.ones(2),
         )
-        room_has_fountain = jax.random.uniform(__rng) > 0.5
+        room_has_fountain = jax.random.uniform(__rng) < config.fountain_probability
         fountain_block = (
             room_has_fountain * config.fountain_block
             + (1 - room_has_fountain)

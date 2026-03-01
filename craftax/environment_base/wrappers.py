@@ -317,6 +317,12 @@ class VideoPlotWrapper(GymnaxWrapper):
 
         def _mob_metrics_single_player(player_pos, mob_pos, mob_mask):
             """Compute closest-mob distance, on-screen flag, and nearby count for one player."""
+            if mob_pos.shape[0] == 0:
+                return (
+                    jnp.asarray(jnp.inf, dtype=jnp.float32),
+                    jnp.asarray(False),
+                    jnp.asarray(0, dtype=jnp.int32),
+                )
             dists = jnp.linalg.norm(player_pos - mob_pos, ord=1, axis=-1)  # (num_mobs,)
             dists = jnp.where(mob_mask, dists, jnp.inf)
             closest_idx = jnp.argmin(dists)
@@ -335,8 +341,14 @@ class VideoPlotWrapper(GymnaxWrapper):
             env_state.player_position, melee_pos, melee_mask)
         dist_to_passive, passive_on_screen, num_passives_nearby = _mob_metrics_all_players(
             env_state.player_position, passive_pos, passive_mask)
-        dist_to_ranged, ranged_on_screen, num_ranged_nearby = _mob_metrics_all_players(
-            env_state.player_position, ranged_pos, ranged_mask)
+        if ranged_pos.shape[0] > 0:
+            dist_to_ranged, ranged_on_screen, num_ranged_nearby = _mob_metrics_all_players(
+                env_state.player_position, ranged_pos, ranged_mask)
+        else:
+            num_players = env_state.player_position.shape[0]
+            dist_to_ranged = jnp.full((num_players,), jnp.inf)
+            ranged_on_screen = jnp.zeros((num_players,), dtype=bool)
+            num_ranged_nearby = jnp.zeros((num_players,), dtype=jnp.int32)
 
         num_monsters_killed = env_state.monsters_killed[env_state.player_level]
 
@@ -344,7 +356,7 @@ class VideoPlotWrapper(GymnaxWrapper):
         info['melee_on_screen'] = melee_on_screen.astype(jnp.float32)
         info['dist_to_passive_l1'] = dist_to_passive
         info['passive_on_screen'] = passive_on_screen.astype(jnp.float32)
-        info['dist_to_ranged_l1'] = dist_to_ranged
+        info['dist_to_ranged_l1'] = dist_to_ranged.astype(jnp.float32)
         info['ranged_on_screen'] = ranged_on_screen.astype(jnp.float32)
         info['num_melee_nearby'] = num_melee_nearby.astype(jnp.float32)
         info['num_passives_nearby'] = num_passives_nearby.astype(jnp.float32)

@@ -39,8 +39,10 @@ LOGGING_STEPS_PER_CALL: 400  # Number of env steps per logging_step call
 LOGGING_THREADS: 1  # Number of env threads to log (must be <= NUM_ENVS) -> set to 1 for less computing time
 
 # Video recording parameters
+SAVE_VIDEO: true             # Whether to record and save videos during logging
 VIDEO_LENGTH: 100  # Number of env steps per video (rollout continues from current state)
 VIDEO_PIXEL_SIZE: 16  # Pixel size for rendering (7=agent, 16=medium, 64=large)
+SAVE_HIDDEN_STATES: false     # Whether to save hidden state CSVs during logging (large files!)
 
 # Seed configuration
 NUM_SEEDS: 1

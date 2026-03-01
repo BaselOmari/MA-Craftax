@@ -163,9 +163,9 @@ FLOOR_MOB_SPAWN_CHANCE = jnp.array(
     [
         # (passive, melee, ranged, melee-night)
         jnp.array([0.1, 0.02, 0.05, 0.1]),  # Floor 0 (overworld)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 1 (gnomish mines)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 2 (dungeon)
-        jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 3 (sewers)
+        jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 1 (gnomish mines)
+        jnp.array([0.025, 0.015, 0.0125, 0.0]), # Floor 2 (dungeon)
+        jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 3 (sewers)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 4 (vaults)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 5 (troll mines)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 6 (fire)
@@ -267,7 +267,7 @@ MOB_TYPE_DAMAGE_MAPPING = jnp.array(
         # (-, melee, -, projectile)
         [NO_DAMAGE, [2, 0, 0], NO_DAMAGE, [2, 0, 0]],  # zombie, arrow
         [NO_DAMAGE, [4, 0, 0], NO_DAMAGE, [4, 0, 0]],  # gnome, dagger
-        [NO_DAMAGE, [3, 0, 0], NO_DAMAGE, [0, 3, 0]],  # orc, fireball
+        [NO_DAMAGE, [0.75, 0, 0], NO_DAMAGE, [0, 0.75, 0]],  # orc, fireball
         [NO_DAMAGE, [5, 0, 0], NO_DAMAGE, [0, 0, 3]],  # lizard, iceball
         [NO_DAMAGE, [6, 0, 0], NO_DAMAGE, [5, 0, 0]],  # knight, arrow2
         [NO_DAMAGE, [6, 1, 1], NO_DAMAGE, [4, 3, 3]],  # troll, slimeball
@@ -282,7 +282,7 @@ MOB_TYPE_HEALTH_MAPPING = jnp.array(
         # (passive, melee, ranged, -)
         jnp.array([3, 5, 3, 0]),  # Floor 0 (overworld)
         jnp.array([4, 7, 5, 0]),  # Floor 1 (gnomish mines)
-        jnp.array([6, 9, 6, 0]),  # Floor 2 (dungeon)
+        jnp.array([3, 4.5, 3, 0]),  # Floor 2 (dungeon)
         jnp.array([8, 11, 8, 0]),  # Floor 3 (sewers)
         jnp.array([0, 12, 12, 0]),  # Floor 4 (vaults)
         jnp.array([0, 20, 4, 0]),  # Floor 5 (troll mines)

@@ -131,6 +131,19 @@ class EnvState:
     revives: int
     ff_damage_dealt: float
     team_kills: jnp.ndarray  # (2,) array: [team_a_kills, team_b_kills] - kills against opposite team
+    walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
+    damage_taken_total: jnp.ndarray  # (player_count,) cumulative damage taken from all sources
+    damage_taken_melee: jnp.ndarray  # (player_count,) cumulative mob melee damage taken
+    damage_taken_ranged: jnp.ndarray  # (player_count,) cumulative ranged/projectile damage taken
+    damage_taken_health: jnp.ndarray  # (player_count,) cumulative health/intrinsic/potion damage taken
+    damage_taken_health_food: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty food
+    damage_taken_health_drink: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty drink
+    damage_taken_health_energy: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty energy
+    damage_taken_health_other: jnp.ndarray  # (player_count,) cumulative health damage from non-necessity sources (e.g., potions)
+    damage_taken_ff: jnp.ndarray  # (player_count,) cumulative friendly-fire (player-vs-player) damage taken
+    ticks_food_empty: jnp.ndarray  # (player_count,) cumulative steps with food == 0
+    ticks_drink_empty: jnp.ndarray  # (player_count,) cumulative steps with drink == 0
+    ticks_energy_empty: jnp.ndarray  # (player_count,) cumulative steps with energy == 0 (and not sleeping)
     
     # Misc Metrics
     all_necessities_frac: jnp.ndarray
@@ -147,7 +160,7 @@ class EnvParams:
     passive_mob_health: int = 3
     ranged_mob_health: int = 3
 
-    mob_despawn_distance: int = 14
+    mob_despawn_distance: int = 16
     max_attribute: int = 5
 
 
@@ -171,9 +184,13 @@ class StaticEnvParams:
     player_count: int = 6
 
     # Mobs Per Player
-    max_melee_mobs: int = 1
-    max_passive_mobs: int = 3
+    max_melee_mobs: int = 2
+    max_passive_mobs: int = 2
     max_growing_plants: int = 10
-    max_ranged_mobs: int = 1
+    max_ranged_mobs: int = 0
     max_mob_projectiles: int = 3
     max_player_projectiles: int = 3
+    snail_spawn_tile_frequency: float = 0.03
+
+    # Rate at which player hunger increases per tick (multiplied with base rate)
+    hunger_increase_rate: float = 0.75

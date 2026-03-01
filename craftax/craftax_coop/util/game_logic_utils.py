@@ -40,6 +40,10 @@ def attack_mob_class(
     can_get_achievement,
     mob_class_index,
 ):
+    if mobs.mask.shape[1] == 0:
+        batch_size = position.shape[0]
+        empty_flags = jnp.zeros((batch_size,), dtype=bool)
+        return mobs, empty_flags, empty_flags, jnp.asarray(0, dtype=jnp.int32), state.achievements
 
     def is_attacking_mob_at_index(mob_index):
         in_mob = (mobs.position[state.player_level, mob_index] == position).all(axis=1)
@@ -223,6 +227,9 @@ def spawn_projectile(
     direction,
     projectile_type,
 ):
+    if projectiles.mask.shape[1] == 0:
+        return projectiles, projectile_directions, projectile_owners
+
     new_projectile_index = jnp.argmax(
         jnp.logical_not(projectiles.mask[state.player_level])
     )
