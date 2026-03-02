@@ -160,7 +160,7 @@ class EnvParams:
     passive_mob_health: int = 3
     ranged_mob_health: int = 3
 
-    mob_despawn_distance: int = 16
+    mob_despawn_distance: int = 500
     max_attribute: int = 5
 
 
@@ -185,7 +185,7 @@ class StaticEnvParams:
 
     # Mobs Per Player
     max_melee_mobs: int = 2
-    max_passive_mobs: int = 2
+    max_passive_mobs: int = 3
     max_growing_plants: int = 10
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 3
