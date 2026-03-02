@@ -3417,8 +3417,11 @@ def craftax_step(
         0.0
     )
 
+    # Use current health state (not previous-step alive flag) for same-step death handling.
+    current_player_alive = state.player_health > 0.0
+
     #ma foraging rewards
-    alive_reward = jnp.full(static_params.player_count, 0.1)
+    alive_reward = jnp.where(current_player_alive, 0.1, 0.0)
     health_reward = jnp.where(state.player_health / get_max_health(state) > 0.5, 0.1, -0.1)
     food_reward = jnp.where(state.player_food / get_max_food(state) > 0.5, 0.1, -0.1)
     drink_reward = jnp.where(state.player_drink / get_max_drink(state) > 0.5, 0.1, -0.1)
@@ -3427,6 +3430,7 @@ def craftax_step(
 
     individual_vanilla_reward = achievement_reward + vanilla_health_reward
     individual_foraging_reward = health_reward + food_reward + drink_reward + energy_reward + alive_reward
+    individual_foraging_reward = jnp.where(current_player_alive, individual_foraging_reward, 0.0)
 
     individual_reward = jax.lax.select(
         params.reward_func == 'foraging',

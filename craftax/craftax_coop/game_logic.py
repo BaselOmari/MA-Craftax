@@ -2541,7 +2541,7 @@ def spawn_mobs(state, rng, params, static_params):
     )
 
     passive_mobs_can_spawn_map = jnp.logical_and(
-        passive_mobs_can_spawn_map, player_distance_map > 3
+        passive_mobs_can_spawn_map, player_distance_map > 2
     )
     passive_mobs_can_spawn_map = jnp.logical_and(
         passive_mobs_can_spawn_map, player_distance_map < params.mob_despawn_distance
@@ -3712,8 +3712,11 @@ def craftax_step(
     # Gain reward if player gained health
     vanilla_health_reward = (state.player_health - init_health) * 0.1
 
+    # Use current health state (not previous-step alive flag) for same-step death handling.
+    current_player_alive = state.player_health > 0.0
+
     #ma foraging rewards
-    alive_reward = jnp.full(static_params.player_count, 0.1)
+    alive_reward = jnp.where(current_player_alive, 0.1, 0.0)
     health_reward = jnp.where(state.player_health / get_max_health(state) > 0.5, 0.1, -0.1)
     food_reward = jnp.where(state.player_food / get_max_food(state) > 0.5, 0.1, -0.1)
     drink_reward = jnp.where(state.player_drink / get_max_drink(state) > 0.5, 0.1, -0.1)
@@ -3722,6 +3725,8 @@ def craftax_step(
 
     individual_vanilla_reward = achievement_reward + vanilla_health_reward
     individual_foraging_reward = health_reward + food_reward + drink_reward + energy_reward + alive_reward
+    # Zero out reward for dead players to prevent frozen stats from generating positive reward.
+    individual_foraging_reward = jnp.where(current_player_alive, individual_foraging_reward, 0.0)
 
     individual_reward = jax.lax.select(
         params.reward_func == 'foraging',
