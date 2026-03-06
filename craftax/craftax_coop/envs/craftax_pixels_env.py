@@ -22,9 +22,14 @@ from craftax_coop.util.game_logic_utils import has_beaten_boss
 from craftax_coop.world_gen.world_gen import generate_world
 
 class CraftaxCoopPixelsEnv(MultiAgentEnv):
-    def __init__(self, num_agents: int = 3):
-        self.num_agents = num_agents
-        self.static_env_params = CraftaxCoopPixelsEnv.default_static_params()
+    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2)):
+        player_count = num_teams * len(team_composition)
+        self.num_agents = player_count
+        self.static_env_params = StaticEnvParams(
+            player_count=player_count,
+            team_composition=team_composition,
+            num_teams=num_teams,
+        )
         self.pixel_size = BLOCK_PIXEL_SIZE_AGENT
 
         self.agents = [
@@ -48,12 +53,13 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
         self, key: chex.PRNGKey, state: EnvState, actions: Dict[str, chex.Array]
     ) -> Tuple[Dict[str, chex.Array], EnvState, Dict[str, float], Dict[str, bool], Dict]:
         actions = jnp.array(list(actions.values()))
-        state, reward = craftax_step(key, state, actions, self.default_params, self.static_env_params)
+        state, reward, individual_reward = craftax_step(key, state, actions, self.default_params, self.static_env_params)
 
         obs = self.get_obs(state)
         done = self.is_terminal(state, self.default_params)
         info = {}
         info["user_info"] = compute_score(state, done, self.static_env_params)
+        info["user_info"]["Reward/individual_reward"] = individual_reward
         info["discount"] = self.discount(state, self.default_params)
 
         agent_rewards = {n: r for n, r in zip(self.agents, reward)}

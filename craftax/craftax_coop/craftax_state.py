@@ -127,11 +127,12 @@ class EnvState:
     drink_trade_count: int
     wood_trade_count: int
     same_trade_count: int
-    diff_trade_count: int
     revives: int
     ff_damage_dealt: float
-    team_kills: jnp.ndarray  # (2,) array: [team_a_kills, team_b_kills] - kills against opposite team
+    team_kills: jnp.ndarray  # (num_teams,) array: kills against other teams, indexed by killer's team
     walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
+    ticks_moved: jnp.ndarray  # (player_count,) ticks where agent actually moved (step_distance > 0)
+    ticks_tried_moving: jnp.ndarray  # (player_count,) ticks where agent chose a move action (incl. blocked)
     damage_taken_total: jnp.ndarray  # (player_count,) cumulative damage taken from all sources
     damage_taken_melee: jnp.ndarray  # (player_count,) cumulative mob melee damage taken
     damage_taken_ranged: jnp.ndarray  # (player_count,) cumulative ranged/projectile damage taken
@@ -144,7 +145,10 @@ class EnvState:
     ticks_food_empty: jnp.ndarray  # (player_count,) cumulative steps with food == 0
     ticks_drink_empty: jnp.ndarray  # (player_count,) cumulative steps with drink == 0
     ticks_energy_empty: jnp.ndarray  # (player_count,) cumulative steps with energy == 0 (and not sleeping)
-    
+    steps_alive: jnp.ndarray  # (player_count,) cumulative steps each agent was alive
+    team_alive_time: jnp.ndarray  # (num_teams,) cumulative steps where at least one team member alive
+    damage_dealt_to_other_team: jnp.ndarray  # (num_teams,) cumulative damage dealt BY this team TO other teams
+
     # Misc Metrics
     all_necessities_frac: jnp.ndarray
 
@@ -172,9 +176,15 @@ class EnvParams:
     team_based_sharing: bool = True  # If True, share rewards only within teams; if False, share across all agents
     reward_func: str = 'foraging'  # 'vanilla' or 'foraging'
     friendly_fire: bool = True
+    allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
+
+    # Trading proximity (square/Chebyshev radius in tiles).
+    # before: Default keeps the old FOV-box behavior for OBS_DIM=(9,11): row<=5, col<=6,
+    # approximated as a single square radius of 6.
+    trade_radius: int = 5
 
 
 @struct.dataclass
@@ -183,14 +193,19 @@ class StaticEnvParams:
     num_levels: int = 9
     player_count: int = 6
 
+    # Team Configuration
+    # team_composition: tuple of Specialization values defining roles per team
+    # e.g. (1, 1, 2) = (FORAGER, FORAGER, WARRIOR) -> 3 agents per team
+    team_composition: tuple = (1, 1, 2)
+    num_teams: int = 2
+
     # Mobs Per Player
     max_melee_mobs: int = 2
-    max_passive_mobs: int = 3
+    max_passive_mobs: int = 4
     max_growing_plants: int = 10
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 3
     max_player_projectiles: int = 3
-    snail_spawn_tile_frequency: float = 0.03
 
     # Rate at which player hunger increases per tick (multiplied with base rate)
-    hunger_increase_rate: float = 0.75
+    hunger_increase_rate: float = 1.0

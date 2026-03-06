@@ -156,6 +156,27 @@ def unbatchify(x: jnp.ndarray, agent_list):
 # Training Function
 # ===========================
 def make_train(config, env):
+    if config["NUM_MINIBATCHES"] <= 0:
+        raise ValueError(
+            f"NUM_MINIBATCHES must be >= 1, got {config['NUM_MINIBATCHES']}."
+        )
+    if config["NUM_ENVS"] <= 0:
+        raise ValueError(f"NUM_ENVS must be >= 1, got {config['NUM_ENVS']}.")
+    if config["NUM_ENVS"] % config["NUM_MINIBATCHES"] != 0:
+        raise ValueError(
+            "NUM_ENVS must be divisible by NUM_MINIBATCHES for minibatch reshaping. "
+            f"Got NUM_ENVS={config['NUM_ENVS']}, NUM_MINIBATCHES={config['NUM_MINIBATCHES']}."
+        )
+
+    logging_threads = int(config.get("LOGGING_THREADS", 1))
+    if logging_threads <= 0:
+        raise ValueError(f"LOGGING_THREADS must be >= 1, got {logging_threads}.")
+    if logging_threads > config["NUM_ENVS"]:
+        raise ValueError(
+            "LOGGING_THREADS must be <= NUM_ENVS to avoid out-of-bounds logging access. "
+            f"Got LOGGING_THREADS={logging_threads}, NUM_ENVS={config['NUM_ENVS']}."
+        )
+
     config["NUM_ACTORS"] = env.num_agents * config["NUM_ENVS"]
     config["NUM_UPDATES"] = (
         config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
@@ -687,165 +708,194 @@ def make_train(config, env):
                     * config["NUM_ENVS"]
                     * config["NUM_STEPS"]
                 )
-                to_log = {
-                    "env_step": env_step,
-                    **metrics["loss"],
-                }
-                
-                # Log per-agent losses (use np.asarray().item() for safe conversion)
-                num_agents = metrics["loss_per_agent"]["total_loss"].shape[0]
+
+                # Team config
+                configured_comp = config.get("TEAM_COMPOSITION", [1, 1, 2])
+                configured_num_teams = int(config.get("NUM_TEAMS", 2))
+                configured_agents_per_team = max(1, len(configured_comp))
+
+                # Derive agent count from runtime tensors (safer than config-only math).
+                num_agents = int(np.asarray(metrics["loss_per_agent"]["total_loss"]).shape[0])
+
+                # Derive team count from runtime user_info when available.
+                info_for_layout = metrics.get("user_info", {})
+                runtime_team_ids = []
+                for key in info_for_layout.keys():
+                    if key.startswith("Alive/team_") and key.endswith("_alive_time"):
+                        try:
+                            team_id_str = key[len("Alive/team_"):-len("_alive_time")]
+                            runtime_team_ids.append(int(team_id_str))
+                        except ValueError:
+                            continue
+                if runtime_team_ids:
+                    num_teams = max(runtime_team_ids) + 1
+                else:
+                    num_teams = max(1, configured_num_teams)
+
+                # Keep team layout valid even if config/runtime diverge.
+                num_teams = max(1, min(num_teams, num_agents))
+                agents_per_team = configured_agents_per_team
+                if agents_per_team * num_teams < num_agents:
+                    agents_per_team = int(np.ceil(num_agents / num_teams))
+
+                to_log = {}
+
+                # ── overview/ ──
+                to_log["overview/env_step"] = env_step
+                # ML global metrics
+                for k in ["total_loss", "value_loss", "actor_loss", "entropy",
+                           "ratio", "ratio_0", "approx_kl", "clip_frac", "aux_loss"]:
+                    to_log[f"overview/{k}"] = metrics["loss"][k]
+
+                # ── agent_{i}/ ML losses ──
                 for i in range(num_agents):
-                    to_log[f"agent_{i}/total_loss"] = np.asarray(metrics["loss_per_agent"]["total_loss"][i]).item()
-                    to_log[f"agent_{i}/value_loss"] = np.asarray(metrics["loss_per_agent"]["value_loss"][i]).item()
-                    to_log[f"agent_{i}/actor_loss"] = np.asarray(metrics["loss_per_agent"]["actor_loss"][i]).item()
-                    to_log[f"agent_{i}/entropy"] = np.asarray(metrics["loss_per_agent"]["entropy"][i]).item()
-                    to_log[f"agent_{i}/aux_loss"] = np.asarray(metrics["loss_per_agent"]["aux_loss"][i]).item()
-                
+                    for k in ["total_loss", "value_loss", "actor_loss", "entropy", "aux_loss"]:
+                        to_log[f"agent_{i}/{k}"] = np.asarray(metrics["loss_per_agent"][k][i]).item()
+
+                # ── Episode-level metrics (only when episodes returned) ──
                 if metrics["returned_episode"].any():
-                    # Log aggregated achievements (mean across all agents) - thicker line with error bars
-                    to_log.update(jax.tree.map(
-                        lambda x: x[metrics["returned_episode"]].mean(),
-                        metrics["user_info"]
-                    ))
-                    # Log per-agent achievements
-                    # info shape from LogWrapper: (num_steps, num_envs, num_agents)
-                    num_agents = metrics["returned_episode"].shape[2]
-                    
-                    # Define team assignments: Team A (even indices), Team B (odd indices)
-                    team_a_agents = list(range(0, num_agents, 2))  # [0, 2, 4, ...]
-                    team_b_agents = list(range(1, num_agents, 2))  # [1, 3, 5, ...]
-                    
-                    # Collect team-level metrics
-                    team_a_returns = []
-                    team_b_returns = []
-                    team_a_lengths = []
-                    team_b_lengths = []
-                    team_a_achievements = {key: [] for key in metrics["user_info"].keys()}
-                    team_b_achievements = {key: [] for key in metrics["user_info"].keys()}
-                    
-                    for agent_idx in range(num_agents):
-                        # Get mask for this agent's returned episodes
-                        agent_mask = metrics["returned_episode"][:, :, agent_idx]  # (num_steps, num_envs)
-                        if agent_mask.any():
-                            # Log per-agent achievements
-                            for key, value in metrics["user_info"].items():
-                                # value shape: (num_steps, num_envs, num_agents)
-                                agent_value = value[:, :, agent_idx]  # (num_steps, num_envs)
-                                agent_mean = agent_value[agent_mask].mean()
-                                # Log as "agent_0/Achievements/collect_wood" - organized by agent
-                                to_log[f"agent_{agent_idx}/{key}"] = np.asarray(agent_mean).item()
-                                
-                                # Collect for team aggregation
-                                if agent_idx in team_a_agents:
-                                    team_a_achievements[key].append(np.asarray(agent_mean).item())
-                                else:
-                                    team_b_achievements[key].append(np.asarray(agent_mean).item())
-                            
-                            # Log per-agent episode returns and lengths
-                            agent_returns = metrics["returned_episode_returns"][:, :, agent_idx][agent_mask].mean()
-                            to_log[f"agent_{agent_idx}/episode_returns"] = np.asarray(agent_returns).item()
-                            agent_lengths = metrics["returned_episode_lengths"][:, :, agent_idx][agent_mask].mean()
-                            to_log[f"agent_{agent_idx}/episode_lengths"] = np.asarray(agent_lengths).item()
-                            
-                            # Collect for team aggregation
-                            if agent_idx in team_a_agents:
-                                team_a_returns.append(np.asarray(agent_returns).item())
-                                team_a_lengths.append(np.asarray(agent_lengths).item())
-                            else:
-                                team_b_returns.append(np.asarray(agent_returns).item())
-                                team_b_lengths.append(np.asarray(agent_lengths).item())
-                    
-                    # Log team-aggregated metrics (mean over team members)
-                    if team_a_returns:
-                        to_log["team_a/episode_returns"] = np.mean(team_a_returns)
-                        to_log["team_a/episode_lengths"] = np.mean(team_a_lengths)
-                        for key, values in team_a_achievements.items():
-                            if values:
-                                to_log[f"team_a/{key}"] = np.mean(values)
-                    
-                    if team_b_returns:
-                        to_log["team_b/episode_returns"] = np.mean(team_b_returns)
-                        to_log["team_b/episode_lengths"] = np.mean(team_b_lengths)
-                        for key, values in team_b_achievements.items():
-                            if values:
-                                to_log[f"team_b/{key}"] = np.mean(values)
+                    info = metrics["user_info"]
+                    ep_mask = metrics["returned_episode"]  # (num_steps, num_envs, num_agents)
 
-                    # Explicit team summaries for requested WandB panels
-                    if team_a_achievements.get("Movement/walking_distance"):
-                        to_log["team_a/avg_walking_distance"] = np.mean(
-                            team_a_achievements["Movement/walking_distance"]
-                        )
-                    if team_b_achievements.get("Movement/walking_distance"):
-                        to_log["team_b/avg_walking_distance"] = np.mean(
-                            team_b_achievements["Movement/walking_distance"]
-                        )
+                    def _team_agent_indices(team_idx):
+                        start = team_idx * agents_per_team
+                        end = min(start + agents_per_team, num_agents)
+                        return range(start, end)
 
-                    damage_keys = [
-                        "Combat/damage_taken_total",
-                        "Combat/damage_taken_melee",
-                        "Combat/damage_taken_ranged",
-                        "Combat/damage_taken_health",
-                        "Combat/damage_taken_health_food",
-                        "Combat/damage_taken_health_drink",
-                        "Combat/damage_taken_health_energy",
-                        "Combat/damage_taken_health_other",
-                        "Combat/damage_taken_ff",
-                    ]
-                    for damage_key in damage_keys:
-                        metric_name = damage_key.split("/")[-1]
-                        if team_a_achievements.get(damage_key):
-                            to_log[f"team_a/{metric_name}"] = np.mean(
-                                team_a_achievements[damage_key]
-                            )
-                        if team_b_achievements.get(damage_key):
-                            to_log[f"team_b/{metric_name}"] = np.mean(
-                                team_b_achievements[damage_key]
-                            )
+                    def _agent_mean(key, agent_idx):
+                        """Mean of metric for agent over returned episodes."""
+                        mask = ep_mask[:, :, agent_idx]
+                        if not mask.any():
+                            return None
+                        return np.asarray(info[key][:, :, agent_idx][mask].mean()).item()
 
-                    necessity_keys = [
-                        "Necessities/ticks_food_empty",
-                        "Necessities/ticks_drink_empty",
-                        "Necessities/ticks_energy_empty",
-                    ]
-                    for nec_key in necessity_keys:
-                        metric_name = nec_key.split("/")[-1]
-                        if team_a_achievements.get(nec_key):
-                            to_log[f"team_a/{metric_name}"] = np.mean(
-                                team_a_achievements[nec_key]
-                            )
-                        if team_b_achievements.get(nec_key):
-                            to_log[f"team_b/{metric_name}"] = np.mean(
-                                team_b_achievements[nec_key]
-                            )
-                    
-                    # Log team-specific trade and combat metrics
-                    # Note: same_subclass_trades tracks trades within teams (Team A with Team A, Team B with Team B)
-                    # Since trades are team-restricted, this is the total valid trades
-                    if "Trade/same_subclass_trades" in metrics["user_info"]:
-                        trade_value = metrics["user_info"]["Trade/same_subclass_trades"]
-                        # trade_value is (num_steps, num_envs, num_agents) - it's broadcast same value for all agents
-                        # Just take mean over returned episodes
-                        if metrics["returned_episode"].any():
-                            trade_mean = trade_value[metrics["returned_episode"]].mean()
-                            to_log["team_trades/total_same_team_trades"] = np.asarray(trade_mean).item()
-                    
-                    # Log diff_subclass_trades (should be 0 since trades are blocked between teams, but log for verification)
-                    if "Trade/diff_subclass_trades" in metrics["user_info"]:
-                        diff_trade_value = metrics["user_info"]["Trade/diff_subclass_trades"]
-                        if metrics["returned_episode"].any():
-                            diff_trade_mean = diff_trade_value[metrics["returned_episode"]].mean()
-                            to_log["team_trades/blocked_cross_team_trades"] = np.asarray(diff_trade_mean).item()
-                    
-                    # Note: Combat/team_a_kills and Combat/team_b_kills are already logged via the general user_info loop above
-                    
-                    to_log["episode_lengths"] = metrics["returned_episode_lengths"][:, :, 0][
-                        metrics["returned_episode"][:, :, 0]
-                    ].mean()
-                    to_log["episode_returns"] = metrics["returned_episode_returns"][:, :, 0][
-                        metrics["returned_episode"][:, :, 0]
-                    ].mean()
-                            
-                print(to_log)
+                    def _team_mean(key, team_idx):
+                        """Mean of metric across team members over returned episodes."""
+                        vals = []
+                        for agent_idx in _team_agent_indices(team_idx):
+                            v = _agent_mean(key, agent_idx)
+                            if v is not None:
+                                vals.append(v)
+                        return np.mean(vals) if vals else None
+
+                    def _global_mean(key):
+                        """Mean of metric over all returned episodes (agent 0, broadcast metric)."""
+                        mask = ep_mask[:, :, 0]
+                        if not mask.any():
+                            return None
+                        return np.asarray(info[key][:, :, 0][mask].mean()).item()
+
+                    # overview/ episode metrics
+                    ep_lengths = metrics["returned_episode_lengths"]
+                    ep_returns = metrics["returned_episode_returns"]
+                    mask0 = ep_mask[:, :, 0]
+                    if mask0.any():
+                        to_log["overview/episode_length"] = np.asarray(ep_lengths[:, :, 0][mask0].mean()).item()
+                        to_log["overview/avg_reward"] = np.asarray(ep_returns[:, :, 0][mask0].mean()).item()
+
+                    # overview/ movement (mean walking distance across all agents)
+                    all_walk = []
+                    for ai in range(num_agents):
+                        v = _agent_mean("Movement/walking_distance", ai)
+                        if v is not None:
+                            all_walk.append(v)
+                    if all_walk:
+                        to_log["overview/movement"] = np.mean(all_walk)
+
+                    # overview/ trades (broadcast scalars, take from agent 0)
+                    for trade_key in ["total_trades", "food_trades", "drink_trades",
+                                      "wood_trades", "same_subclass_trades", "diff_subclass_trades"]:
+                        v = _global_mean(f"Trade/{trade_key}")
+                        if v is not None:
+                            to_log[f"overview/{trade_key}"] = v
+
+                    # overview/ revives
+                    v = _global_mean("Overview/revives")
+                    if v is not None:
+                        to_log["overview/revives"] = v
+
+                    # ── agent_{i}/ individual_reward + alive_ratio ──
+                    for ai in range(num_agents):
+                        # Use per-agent episode return for a stable individual reward metric.
+                        # The raw "Reward/individual_reward" in user_info is a per-step signal;
+                        # sampling it only on terminal steps is often ~0 when episodes end in death.
+                        mask_ai = ep_mask[:, :, ai]
+                        if mask_ai.any():
+                            to_log[f"agent_{ai}/individual_reward"] = np.asarray(
+                                ep_returns[:, :, ai][mask_ai].mean()
+                            ).item()
+
+                        # Keep terminal-step raw signal for debugging data flow.
+                        if "Reward/individual_reward" in info:
+                            v = _agent_mean("Reward/individual_reward", ai)
+                            if v is not None:
+                                to_log[f"agent_{ai}/individual_reward_terminal_step"] = v
+
+                        v = _agent_mean("Alive/alive_ratio", ai)
+                        if v is not None:
+                            to_log[f"agent_{ai}/alive_ratio"] = v
+
+                        # per-agent movement
+                        for mk in ["walking_distance", "ticks_moved", "ticks_tried_moving"]:
+                            v = _agent_mean(f"Movement/{mk}", ai)
+                            if v is not None:
+                                to_log[f"agent_{ai}/{mk}"] = v
+
+                    # ── team_{t}/ metrics ──
+                    for ti in range(num_teams):
+                        tp = f"team_{ti}"
+
+                        # shared_reward (= episode_returns averaged over team members)
+                        team_ret = []
+                        for idx in _team_agent_indices(ti):
+                            mask_ai = ep_mask[:, :, idx]
+                            if mask_ai.any():
+                                team_ret.append(np.asarray(ep_returns[:, :, idx][mask_ai].mean()).item())
+                        if team_ret:
+                            to_log[f"{tp}/shared_reward"] = np.mean(team_ret)
+
+                        # alive_time
+                        v = _global_mean(f"Alive/team_{ti}_alive_time")
+                        if v is not None:
+                            to_log[f"{tp}/alive_time"] = v
+
+                        # walking_distance per team
+                        for mk in ["walking_distance", "ticks_moved", "ticks_tried_moving"]:
+                            v = _team_mean(f"Movement/{mk}", ti)
+                            if v is not None:
+                                to_log[f"{tp}/{mk}"] = v
+
+                        # necessities
+                        for nk in ["ticks_food_empty", "ticks_drink_empty", "ticks_energy_empty"]:
+                            v = _team_mean(f"Necessities/{nk}", ti)
+                            if v is not None:
+                                to_log[f"{tp}/{nk}"] = v
+
+                        # combat: damage taken (aggregated over team members)
+                        for dk in ["damage_taken_total", "damage_taken_melee", "damage_taken_ranged",
+                                   "damage_taken_health", "damage_taken_health_food", "damage_taken_health_drink",
+                                   "damage_taken_health_energy", "damage_taken_health_other", "damage_taken_ff"]:
+                            v = _team_mean(f"Combat/{dk}", ti)
+                            if v is not None:
+                                to_log[f"{tp}/{dk}"] = v
+
+                        # combat: damage dealt to other team + kills (broadcast scalars)
+                        v = _global_mean(f"Combat/team_{ti}_damage_dealt")
+                        if v is not None:
+                            to_log[f"{tp}/damage_to_other_team"] = v
+                        v = _global_mean(f"Combat/team_{ti}_kills")
+                        if v is not None:
+                            to_log[f"{tp}/kills_against_other_team"] = v
+
+                    # ── team_achievements/team_{t}/ ──
+                    for ti in range(num_teams):
+                        tp = f"team_achievements/team_{ti}"
+                        for achievement_key in [k for k in info.keys() if k.startswith("Achievements/")]:
+                            short_name = achievement_key.split("/", 1)[1]
+                            v = _team_mean(achievement_key, ti)
+                            if v is not None:
+                                to_log[f"{tp}/{short_name}"] = v
+
                 wandb.log(to_log, step=metrics["update_steps"])
 
             jax.experimental.io_callback(callback, None, metric, train_state, update_steps, ordered=True)
@@ -1238,7 +1288,9 @@ def make_train(config, env):
 def single_run(config):
     alg_name = config.get("ALG_NAME", "seperate-ippo-rnn")
     env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
-    env = make_craftax_env_from_name(env_name)
+    num_teams = config.get("NUM_TEAMS", 2)
+    team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
+    env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition)
 
     wandb.init(
         entity=config["ENTITY"],

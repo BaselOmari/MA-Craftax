@@ -294,15 +294,54 @@ def generate_dungeon(rng, static_params, config):
         + is_darkness_map * BlockType.DARKNESS.value
     )
 
-    # Scatter SNAIL_SPAWN tiles on ~5% of PATH tiles (food source markers)
+    # Place SNAIL_SPAWN tiles per room with configured probability.
+    # Each selected room gets exactly one inner PATH tile converted to SNAIL_SPAWN.
     rng, _rng = jax.random.split(rng)
-    is_path_tile = map == BlockType.PATH.value
-    snail_roll = jax.random.uniform(_rng, shape=static_params.map_size)
-    snail_spawn_frequency = jnp.clip(static_params.snail_spawn_tile_frequency, 0.0, 1.0)
-    make_snail_spawn = jnp.logical_and(is_path_tile, snail_roll < snail_spawn_frequency)
-    # Don't place on tiles that already have items (fountains, chests, etc.)
-    make_snail_spawn = jnp.logical_and(make_snail_spawn, item_map == ItemType.NONE.value)
-    map = jnp.where(make_snail_spawn, BlockType.SNAIL_SPAWN.value, map)
+    room_snail_rolls = jax.random.uniform(_rng, shape=(NUM_ROOMS,))
+    room_has_snail = room_snail_rolls < config.snail_spawn_room_probability
+    # Unpad room positions to map coordinates
+    unpadded_positions = room_positions - MAX_ROOM_SIZE
+
+    def _mark_room_snail(carry, room_index):
+        current_map, room_rng = carry
+        room_rng, _room_rng = jax.random.split(room_rng)
+        rp = unpadded_positions[room_index]
+        rs = room_sizes[room_index]
+        # Build mask for tiles inside this room (excluding border for inner tiles)
+        rows = jnp.arange(static_params.map_size[0])
+        cols = jnp.arange(static_params.map_size[1])
+        in_room_rows = jnp.logical_and(rows >= rp[0] + 1, rows < rp[0] + rs[0] - 1)
+        in_room_cols = jnp.logical_and(cols >= rp[1] + 1, cols < rp[1] + rs[1] - 1)
+        in_room = in_room_rows[:, None] & in_room_cols[None, :]
+        # Only convert PATH tiles without items
+        is_path = current_map == BlockType.PATH.value
+        no_item = item_map == ItemType.NONE.value
+        valid_snail_tiles = in_room & is_path & no_item
+
+        # Sample exactly one valid tile in this room (if any exists).
+        valid_flat = valid_snail_tiles.reshape(-1).astype(jnp.float32)
+        valid_count = valid_flat.sum()
+        num_tiles = valid_flat.shape[0]
+        probs = jnp.where(
+            valid_count > 0.0,
+            valid_flat / valid_count,
+            jnp.full_like(valid_flat, 1.0 / num_tiles),
+        )
+        flat_idx = jax.random.choice(_room_rng, jnp.arange(num_tiles), p=probs)
+        tile_r = flat_idx // static_params.map_size[1]
+        tile_c = flat_idx % static_params.map_size[1]
+
+        should_place = room_has_snail[room_index] & (valid_count > 0.0)
+        current_val = current_map[tile_r, tile_c]
+        new_val = jax.lax.select(
+            should_place,
+            jnp.asarray(BlockType.SNAIL_SPAWN.value, dtype=current_val.dtype),
+            current_val,
+        )
+        current_map = current_map.at[tile_r, tile_c].set(new_val)
+        return (current_map, room_rng), None
+
+    (map, _), _ = jax.lax.scan(_mark_room_snail, (map, rng), jnp.arange(NUM_ROOMS))
 
     light_map = jnp.ones(static_params.map_size, dtype=jnp.float32)
 
@@ -503,13 +542,47 @@ def generate_world(rng, params, static_params):
     temp_center = jnp.array([map_h // 2, map_w // 2])
     temp_player_position = jnp.tile(temp_center, (static_params.player_count, 1))
 
-    # Fix player specializations
-    player_specialization_order = jnp.array([Specialization.WARRIOR.value, Specialization.FORAGER.value, Specialization.MINER.value])
-    player_specializations = player_specialization_order[jnp.arange(static_params.player_count) % 3]
+    agents_per_team = len(static_params.team_composition)
+    if agents_per_team <= 0:
+        raise ValueError("team_composition must contain at least one role.")
+    if static_params.num_teams <= 0:
+        raise ValueError("num_teams must be >= 1.")
+    expected_player_count = static_params.num_teams * agents_per_team
+    if static_params.player_count != expected_player_count:
+        raise ValueError(
+            f"player_count ({static_params.player_count}) must equal "
+            f"num_teams * len(team_composition) ({expected_player_count})."
+        )
+    if static_params.num_teams > NUM_ROOMS:
+        raise ValueError(
+            f"num_teams ({static_params.num_teams}) exceeds available rooms "
+            f"({NUM_ROOMS}) for team spawn assignment."
+        )
 
-    # Fix player subclasses
-    player_sc_order = jnp.array([Subclass.A.value, Subclass.B.value])
-    player_sc = player_sc_order[jnp.arange(static_params.player_count) % 2]
+    valid_specializations = {
+        Specialization.FORAGER.value,
+        Specialization.WARRIOR.value,
+        Specialization.MINER.value,
+    }
+    invalid_roles = [
+        role for role in static_params.team_composition
+        if role not in valid_specializations
+    ]
+    if invalid_roles:
+        raise ValueError(
+            "team_composition contains invalid role ids. "
+            "Allowed values are FORAGER=1, WARRIOR=2, MINER=3. "
+            f"Got invalid values: {invalid_roles}"
+        )
+
+    # Fix player specializations from team_composition config
+    # e.g. team_composition=(1, 1, 2) with num_teams=2 -> [1, 1, 2, 1, 1, 2]
+    comp = jnp.array(static_params.team_composition)
+    player_specializations = jnp.tile(comp, static_params.num_teams)
+
+    # Fix player subclasses (team assignment)
+    # e.g. 6 players, 3 per team -> [0, 0, 0, 1, 1, 1]
+    player_sc = jnp.arange(static_params.player_count) // agents_per_team
 
     # Generate smoothgens (overworld, caves, elemental levels, boss level)
     rngs = jax.random.split(rng, 7)
@@ -550,27 +623,45 @@ def generate_world(rng, params, static_params):
     # Compute room centers
     room_centers = start_room_positions + start_room_sizes // 2  # (NUM_ROOMS, 2)
 
-    # Team A: pick a random room
-    rng, rng_a, rng_b = jax.random.split(rng, 3)
-    room_probs_a = jnp.ones(NUM_ROOMS) / NUM_ROOMS
-    team_a_room_idx = jax.random.choice(rng_a, NUM_ROOMS, p=room_probs_a)
-    team_a_center = room_centers[team_a_room_idx]  # (2,)
+    # Pick one room per team, each far from previously chosen rooms
+    num_teams = static_params.num_teams
+    team_rngs = jax.random.split(rng, num_teams + 1)
+    rng = team_rngs[0]
+    team_rngs = team_rngs[1:]
 
-    # Team B: pick a room whose center is >= min_team_spawn_distance from Team A's room
-    dists_between_rooms = jnp.sqrt(
-        ((room_centers - team_a_center).astype(jnp.float32) ** 2).sum(axis=-1)
-    )
-    far_enough = dists_between_rooms >= params.min_team_spawn_distance
-    room_probs_b = far_enough.astype(jnp.float32)
-    has_valid = room_probs_b.sum() > 0
-    # Fallback: if no room is far enough, use all rooms except Team A's
-    fallback_probs = jnp.ones(NUM_ROOMS).at[team_a_room_idx].set(0.0)
-    fallback_probs = fallback_probs / jnp.maximum(fallback_probs.sum(), 1.0)
-    room_probs_b = jnp.where(has_valid,
-                             room_probs_b / jnp.maximum(room_probs_b.sum(), 1.0),
-                             fallback_probs)
-    team_b_room_idx = jax.random.choice(rng_b, NUM_ROOMS, p=room_probs_b)
-    team_b_center = room_centers[team_b_room_idx]  # (2,)
+    def _pick_team_room(carry, team_idx):
+        used_mask = carry  # (NUM_ROOMS,) bool: rooms already taken
+        team_rng = team_rngs[team_idx]
+
+        # Compute min distance to all already-chosen rooms
+        # For the first team, no rooms are used yet so all are valid
+        all_dists = jnp.sqrt(
+            ((room_centers[:, None, :] - room_centers[None, :, :]).astype(jnp.float32) ** 2).sum(axis=-1)
+        )  # (NUM_ROOMS, NUM_ROOMS)
+        # Min distance from each candidate to any used room (large value if no rooms used yet)
+        min_dist_to_used = jnp.where(used_mask[None, :], all_dists, jnp.float32(1e6)).min(axis=1)  # (NUM_ROOMS,)
+        # First team: no rooms used, so min_dist_to_used is all 1e6 -> all far enough
+        far_enough = min_dist_to_used >= params.min_team_spawn_distance
+        # Exclude already-used rooms
+        available = jnp.logical_and(far_enough, jnp.logical_not(used_mask))
+
+        # Fallback: if no room is far enough, use any unused room
+        unused = jnp.logical_not(used_mask)
+        has_valid = available.astype(jnp.float32).sum() > 0
+        probs = jnp.where(has_valid, available.astype(jnp.float32), unused.astype(jnp.float32))
+        probs = probs / jnp.maximum(probs.sum(), 1.0)
+
+        room_idx = jax.random.choice(team_rng, NUM_ROOMS, p=probs)
+        new_used_mask = used_mask.at[room_idx].set(True)
+        return new_used_mask, room_idx
+
+    init_used = jnp.zeros(NUM_ROOMS, dtype=bool)
+    _, team_room_indices = jax.lax.scan(_pick_team_room, init_used, jnp.arange(num_teams))
+    # team_room_indices: (num_teams,) - room index for each team
+
+    team_centers_all = room_centers[team_room_indices]  # (num_teams, 2)
+    team_room_positions_all = start_room_positions[team_room_indices]  # (num_teams, 2)
+    team_room_sizes_all = start_room_sizes[team_room_indices]  # (num_teams, 2)
 
     # Assign each player to a nearby tile in its team's room (avoid full stacking)
     spawn_offsets = jnp.array(
@@ -592,26 +683,15 @@ def generate_world(rng, params, static_params):
         dtype=jnp.int32,
     )
     player_indices = jnp.arange(static_params.player_count, dtype=jnp.int32)
-    is_team_b = (player_indices % 2) == 1
-    team_a_slots = jnp.cumsum((1 - is_team_b.astype(jnp.int32))) - 1
-    team_b_slots = jnp.cumsum(is_team_b.astype(jnp.int32)) - 1
-    slot_indices = jnp.where(is_team_b, team_b_slots, team_a_slots) % spawn_offsets.shape[0]
+    # Slot within team (0, 1, 2, ..., agents_per_team-1, 0, 1, 2, ...)
+    slot_indices = (player_indices % agents_per_team) % spawn_offsets.shape[0]
 
-    team_centers = jnp.where(
-        is_team_b[:, None], team_b_center[None, :], team_a_center[None, :]
-    )
+    # Map each player to its team's room center and bounds
+    team_centers = team_centers_all[player_sc]  # (player_count, 2)
     raw_player_position = team_centers + spawn_offsets[slot_indices]
 
-    team_room_positions = jnp.where(
-        is_team_b[:, None],
-        start_room_positions[team_b_room_idx][None, :],
-        start_room_positions[team_a_room_idx][None, :],
-    )
-    team_room_sizes = jnp.where(
-        is_team_b[:, None],
-        start_room_sizes[team_b_room_idx][None, :],
-        start_room_sizes[team_a_room_idx][None, :],
-    )
+    team_room_positions = team_room_positions_all[player_sc]  # (player_count, 2)
+    team_room_sizes = team_room_sizes_all[player_sc]  # (player_count, 2)
     room_min = team_room_positions
     room_max = team_room_positions + team_room_sizes - 1
     player_position = jnp.clip(raw_player_position, room_min, room_max)
@@ -634,6 +714,23 @@ def generate_world(rng, params, static_params):
     item_map = item_map.at[START_LEVEL, player_position[:, 0], player_position[:, 1]].set(
         jnp.where(is_ladder, ItemType.NONE.value, spawn_items)
     )
+
+    # Remove SNAIL_SPAWN tiles from team spawn rooms
+    # team_room_indices: (num_teams,) indices into dungeon_room_positions[0]
+    def _clear_spawn_room_snails(current_map, team_idx):
+        rp = start_room_positions[team_room_indices[team_idx]]
+        rs = start_room_sizes[team_room_indices[team_idx]]
+        rows = jnp.arange(static_params.map_size[0])
+        cols = jnp.arange(static_params.map_size[1])
+        in_room = (rows >= rp[0])[:, None] & (rows < rp[0] + rs[0])[:, None] & \
+                  (cols >= rp[1])[None, :] & (cols < rp[1] + rs[1])[None, :]
+        is_snail = current_map[START_LEVEL] == BlockType.SNAIL_SPAWN.value
+        revert = in_room & is_snail
+        new_level_map = jnp.where(revert, BlockType.PATH.value, current_map[START_LEVEL])
+        current_map = current_map.at[START_LEVEL].set(new_level_map)
+        return current_map, None
+
+    map, _ = jax.lax.scan(_clear_spawn_room_snails, map, jnp.arange(num_teams))
 
     # Mobs
     def generate_empty_mobs(max_mobs):
@@ -658,6 +755,53 @@ def generate_world(rng, params, static_params):
     passive_mobs = generate_empty_mobs(
         static_params.max_passive_mobs * static_params.player_count
     )
+
+    # Pre-spawn one snail per team in each team's spawn room
+    snail_type_id = FLOOR_MOB_MAPPING[START_LEVEL, MobType.PASSIVE.value]
+    snail_health = MOB_TYPE_HEALTH_MAPPING[snail_type_id, MobType.PASSIVE.value]
+    snail_spawn_offsets = jnp.array(
+        [
+            [0, 1],
+            [0, -1],
+            [1, 1],
+            [-1, 1],
+            [1, -1],
+            [-1, -1],
+            [2, 1],
+            [-2, 1],
+            [2, -1],
+            [-2, -1],
+            [2, 0],
+            [-2, 0],
+            [0, 2],
+            [0, -2],
+        ],
+        dtype=jnp.int32,
+    )
+    for t in range(num_teams):
+        room_min = team_room_positions_all[t]
+        room_max = team_room_positions_all[t] + team_room_sizes_all[t] - 1
+        default_pos = jnp.clip(team_centers_all[t] + jnp.array([0, 1]), room_min, room_max)
+        snail_pos = default_pos
+        has_selected_pos = jnp.asarray(False)
+
+        # Pick a small offset near the room center that is not occupied by a player.
+        for offset in snail_spawn_offsets:
+            candidate_pos = jnp.clip(team_centers_all[t] + offset, room_min, room_max)
+            collides_with_player = (player_position == candidate_pos[None, :]).all(axis=1).any()
+            candidate_block = map[START_LEVEL, candidate_pos[0], candidate_pos[1]]
+            is_walkable = jnp.logical_not(jnp.isin(candidate_block, jnp.array(SOLID_BLOCKS)))
+            can_use_candidate = jnp.logical_and(jnp.logical_not(collides_with_player), is_walkable)
+            take_candidate = jnp.logical_and(jnp.logical_not(has_selected_pos), can_use_candidate)
+            snail_pos = jnp.where(take_candidate, candidate_pos, snail_pos)
+            has_selected_pos = jnp.logical_or(has_selected_pos, take_candidate)
+
+        passive_mobs = passive_mobs.replace(
+            position=passive_mobs.position.at[START_LEVEL, t].set(snail_pos),
+            health=passive_mobs.health.at[START_LEVEL, t].set(snail_health),
+            mask=passive_mobs.mask.at[START_LEVEL, t].set(True),
+            type_id=passive_mobs.type_id.at[START_LEVEL, t].set(snail_type_id),
+        )
 
     # Projectiles
     def _create_projectiles(max_num):
@@ -775,11 +919,12 @@ def generate_world(rng, params, static_params):
         drink_trade_count=jnp.asarray(0, dtype=jnp.int32),
         wood_trade_count=jnp.asarray(0, dtype=jnp.int32),
         same_trade_count=jnp.asarray(0, dtype=jnp.int32),
-        diff_trade_count=jnp.asarray(0, dtype=jnp.int32),
         revives=jnp.asarray(0, dtype=jnp.int32),
         ff_damage_dealt=jnp.asarray(0.0, dtype=jnp.float32),
-        team_kills=jnp.zeros(2, dtype=jnp.int32),  # [team_a_kills, team_b_kills]
+        team_kills=jnp.zeros(static_params.num_teams, dtype=jnp.int32),
         walking_distance=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        ticks_moved=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        ticks_tried_moving=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         damage_taken_total=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         damage_taken_melee=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         damage_taken_ranged=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
@@ -792,6 +937,9 @@ def generate_world(rng, params, static_params):
         ticks_food_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         ticks_drink_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         ticks_energy_empty=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        steps_alive=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        team_alive_time=jnp.zeros((static_params.num_teams,), dtype=jnp.float32),
+        damage_dealt_to_other_team=jnp.zeros((static_params.num_teams,), dtype=jnp.float32),
         all_necessities_frac=jnp.ones((static_params.player_count,), dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),

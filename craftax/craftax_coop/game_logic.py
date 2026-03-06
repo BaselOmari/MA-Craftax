@@ -38,8 +38,12 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         jnp.logical_not(state.player_alive),
     )
 
+    attacker_damage = (
+        is_interacting_with_diff_sc_player
+        * get_damage_between_players(state, diff_player_interacting_with)
+    )
     damage_taken = jnp.zeros(static_params.player_count).at[diff_player_interacting_with].add(
-        is_interacting_with_diff_sc_player * get_damage_between_players(state, diff_player_interacting_with)
+        attacker_damage
     )
     damage_taken *= env_params.friendly_fire
 
@@ -54,18 +58,37 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     was_alive = state.player_health > 0
     is_now_dead = new_player_health <= 0
     just_killed = jnp.logical_and(was_alive, is_now_dead)
-    # Verify the damage from opposite team was sufficient to kill (killing blow check)
     death_caused_by_opposite_team = jnp.logical_and(
         just_killed,
-        damage_taken >= state.player_health  # Damage must be >= remaining health
+        damage_taken >= state.player_health
     )
-    
-    # Count kills per team: team_kills[0] = kills by Team A (subclass 0), team_kills[1] = kills by Team B (subclass 1)
-    # A kill by Team A happens when a Team B player dies from Team A's killing blow
-    team_a_kills = jnp.logical_and(death_caused_by_opposite_team, state.player_sc == 1).sum()  # Team B deaths from Team A
-    team_b_kills = jnp.logical_and(death_caused_by_opposite_team, state.player_sc == 0).sum()  # Team A deaths from Team B
-    new_team_kills = state.team_kills.at[0].add(team_a_kills).at[1].add(team_b_kills)
+
+    # Attribute each cross-team kill to a single attacker team.
+    # If multiple attackers hit the same victim this tick, attribute the kill to
+    # the attacker that contributed the highest damage in this step.
+    attacker_targets_victim = jnp.logical_and(
+        is_interacting_with_diff_sc_player[:, None],
+        diff_player_interacting_with[:, None]
+        == jnp.arange(static_params.player_count)[None, :],
+    )
+    damage_by_attacker_to_victim = (
+        attacker_targets_victim * attacker_damage[:, None]
+    )
+    killer_attacker_idx = jnp.argmax(damage_by_attacker_to_victim, axis=0)
+    has_killer_attacker = attacker_targets_victim.any(axis=0)
+    killer_teams = state.player_sc[killer_attacker_idx]
+
+    new_team_kills = state.team_kills
+    kill_counts = jnp.logical_and(
+        death_caused_by_opposite_team, has_killer_attacker
+    ).astype(jnp.int32)
+    new_team_kills = new_team_kills.at[killer_teams].add(kill_counts)
        
+    # Track damage dealt to other teams per attacker team
+    # attacker_damage is per-attacker, attacker's team is state.player_sc[attacker_idx]
+    attacker_teams = state.player_sc  # (player_count,)
+    new_damage_dealt_to_other_team = state.damage_dealt_to_other_team.at[attacker_teams].add(attacker_damage)
+
     state = state.replace(
         player_health=new_player_health,
         revives=state.revives+is_player_being_revived.sum(),
@@ -73,6 +96,7 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         team_kills=new_team_kills,
         damage_taken_total=state.damage_taken_total + damage_taken,
         damage_taken_ff=state.damage_taken_ff + damage_taken,
+        damage_dealt_to_other_team=new_damage_dealt_to_other_team,
     )
     return state
 
@@ -96,11 +120,13 @@ def update_plants_with_eat(state, plant_position, is_eating_plant):
 
 def add_items_from_chest(rng, state, inventory, is_opening_chest):
     is_miner = state.player_specialization == Specialization.MINER.value
+    is_forager = state.player_specialization == Specialization.FORAGER.value
+    is_miner_or_forager = jnp.logical_or(is_miner, is_forager)
     is_warrior = state.player_specialization == Specialization.WARRIOR.value
 
     # Wood (60%)
     rng, _rng = jax.random.split(rng)
-    is_looting_wood = jax.random.uniform(_rng) < 0.6 * is_opening_chest *is_miner
+    is_looting_wood = jax.random.uniform(_rng) < 0.6 * is_opening_chest *is_miner_or_forager
     rng, _rng = jax.random.split(rng)
     wood_loot_amount = (
         jax.random.randint(_rng, shape=(), minval=1, maxval=6) * is_looting_wood
@@ -108,7 +134,7 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
 
     # Torch (60%)
     rng, _rng = jax.random.split(rng)
-    collect_prob = 0.6 * is_miner
+    collect_prob = 0.6 * is_miner_or_forager
     is_looting_torch = jax.random.uniform(_rng) < collect_prob * is_opening_chest
     rng, _rng = jax.random.split(rng)
     torch_loot_amount = (
@@ -178,7 +204,7 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
 
     is_looting_pickaxe = jnp.logical_and(
         jnp.logical_and(
-            is_miner,
+            is_miner_or_forager,
             jnp.logical_and(is_looting_tool, tool_id == 0)
         ),
         is_opening_chest
@@ -223,13 +249,13 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
 
     # Update inventory
     return inventory.replace(
-        wood=inventory.wood + wood_loot_amount*is_miner,
+        wood=inventory.wood + wood_loot_amount*is_miner_or_forager,
         torches=inventory.torches + torch_loot_amount,
-        coal=inventory.coal + coal_loot_amount*is_miner,
-        iron=inventory.iron + iron_loot_amount*is_miner,
-        diamond=inventory.diamond + diamond_loot_amount*is_miner,
-        sapphire=inventory.sapphire + sapphire_loot_amount*is_miner,
-        ruby=inventory.ruby + ruby_loot_amount*is_miner,
+        coal=inventory.coal + coal_loot_amount*is_miner_or_forager,
+        iron=inventory.iron + iron_loot_amount*is_miner_or_forager,
+        diamond=inventory.diamond + diamond_loot_amount*is_miner_or_forager,
+        sapphire=inventory.sapphire + sapphire_loot_amount*is_miner_or_forager,
+        ruby=inventory.ruby + ruby_loot_amount*is_miner_or_forager,
         arrows=inventory.arrows + arrows_loot_amount,
         pickaxe=new_pickaxe_level,
         # sword=new_sword_level,
@@ -705,6 +731,8 @@ def do_crafting(state, actions, static_params):
     is_at_crafting_table = is_near_block(state, BlockType.CRAFTING_TABLE.value, static_params)
     is_at_furnace = is_near_block(state, BlockType.FURNACE.value, static_params)
     is_miner = state.player_specialization == Specialization.MINER.value
+    is_forager = state.player_specialization == Specialization.FORAGER.value
+    is_miner_or_forager = jnp.logical_or(is_miner, is_forager)
     is_warrior = state.player_specialization == Specialization.WARRIOR.value
 
     new_achievements = state.achievements
@@ -712,7 +740,7 @@ def do_crafting(state, actions, static_params):
     # Wood pickaxe
     can_craft_wood_pickaxe = jnp.logical_and(
         state.inventory.wood >= 1,
-        is_miner
+        is_miner_or_forager
     )
 
     is_crafting_wood_pickaxe = jnp.logical_and(
@@ -731,7 +759,7 @@ def do_crafting(state, actions, static_params):
 
     # Stone pickaxe
     can_craft_stone_pickaxe = jnp.logical_and(
-        is_miner,
+        is_miner_or_forager,
         jnp.logical_and(
             new_inventory.wood >= 1, new_inventory.stone >= 1
         )
@@ -763,7 +791,7 @@ def do_crafting(state, actions, static_params):
         ),
     )
     can_craft_iron_pickaxe = jnp.logical_and(
-        is_miner,
+        is_miner_or_forager,
         can_craft_iron_pickaxe,
     )
     is_crafting_iron_pickaxe = jnp.logical_and(
@@ -791,7 +819,7 @@ def do_crafting(state, actions, static_params):
         new_inventory.wood >= 1, new_inventory.diamond >= 3
     )
     can_craft_diamond_pickaxe = jnp.logical_and(
-        is_miner,
+        is_miner_or_forager,
         can_craft_diamond_pickaxe,
     )
     is_crafting_diamond_pickaxe = jnp.logical_and(
@@ -1002,7 +1030,7 @@ def do_crafting(state, actions, static_params):
     can_craft_torch = jnp.logical_and(new_inventory.coal >= 1, new_inventory.wood >= 1)
     can_craft_torch = jnp.logical_and(
         can_craft_torch,
-        is_miner,
+        is_miner_or_forager,
     )
     is_crafting_torch = jnp.logical_and(
         actions == Action.MAKE_TORCH.value,
@@ -1172,7 +1200,10 @@ def place_block(state, action, static_params):
     )
     is_player_placing_stone = jnp.logical_and(
         is_player_placing_stone,
-        state.player_specialization == Specialization.MINER.value
+        jnp.logical_or(
+            state.player_specialization == Specialization.MINER.value,
+            state.player_specialization == Specialization.FORAGER.value
+        )
     )
     is_any_player_placing_stone = jnp.logical_and(
         equal_block_placement,
@@ -2105,7 +2136,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             death_caused_by_projectile,
             shooter_team != victim_team  # Only count cross-team kills
         )
-        # team_kills[0] = Team A kills, team_kills[1] = Team B kills
+        # Attribute projectile kill to shooter's team
         new_team_kills_projectile = state.team_kills.at[shooter_team].add(just_killed_projectile.astype(jnp.int32))
         
         state, did_attack_mob0, did_kill_mob0 = attack_mob(
@@ -2147,6 +2178,11 @@ def update_mobs(rng, state, params, env_params, static_params):
             player_attack_index
         ].add(player_damage_dealt)
 
+        # Track damage dealt to other team by shooter's team (projectile)
+        new_damage_dealt_projectile = state.damage_dealt_to_other_team.at[shooter_team].add(
+            player_damage_dealt * is_cross_team_hit
+        )
+
         state = state.replace(
             player_health=new_player_health,
             team_kills=new_team_kills_projectile,
@@ -2160,6 +2196,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             ),
             damage_taken_total=state.damage_taken_total + ff_ranged_damage_taken,
             damage_taken_ff=state.damage_taken_ff + ff_ranged_damage_taken,
+            damage_dealt_to_other_team=new_damage_dealt_projectile,
         )
 
         return (rng, state), None
@@ -2465,10 +2502,15 @@ def move_player(state, actions, params, static_params):
         state.player_direction * (1 - is_new_direction) + actions * is_new_direction
     )
 
+    ticks_moved = state.ticks_moved + (step_distance > 0).astype(jnp.int32)
+    ticks_tried_moving = state.ticks_tried_moving + is_new_direction.astype(jnp.int32)
+
     state = state.replace(
         player_position=position,
         player_direction=new_direction,
         walking_distance=state.walking_distance + step_distance,
+        ticks_moved=ticks_moved,
+        ticks_tried_moving=ticks_tried_moving,
     )
 
     return state
@@ -2960,7 +3002,7 @@ def cast_spell(state, action, static_params):
         is_casting_fireball = jnp.logical_and(
             is_casting_fireball,
             jnp.logical_and(
-                jnp.logical_or(is_miner[player_index], is_warrior[player_index]),
+                jnp.logical_or(jnp.logical_or(is_miner[player_index], is_warrior[player_index]), is_forager[player_index]),
                 player_projectiles.mask[state.player_level].sum()
                 < (static_params.max_player_projectiles * static_params.player_count),
             )
@@ -3407,21 +3449,19 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_drink_trade_count = state.drink_trade_count
     new_wood_trade_count = state.wood_trade_count
     new_same_trade_count = state.same_trade_count
-    new_diff_trade_count = state.diff_trade_count
 
     in_same_sc = (jnp.expand_dims(state.player_sc, axis=1) == jnp.expand_dims(state.player_sc, axis=0)).T
 
     player_trading_to = action - Action.GIVE.value
     player_trading_to += 1 * (player_trading_to >= jnp.arange(static_params.player_count))
 
-    # FOV-based proximity check: receiver must be within the FOV rectangle + 1 tile padding
-    # OBS_DIM = (9, 11) → half-extents = (4, 5) → with +1 padding = (5, 6)
+    # Trading proximity check using a configurable square radius.
     giver_pos = state.player_position  # (player_count, 2) int32
     receiver_pos = giver_pos[player_trading_to]  # (player_count, 2)
     delta = jnp.abs(giver_pos - receiver_pos)  # (player_count, 2)
     within_radius = jnp.logical_and(
-        delta[:, 0] <= (OBS_DIM[0] // 2 + 1),  # row: 4 + 1 = 5
-        delta[:, 1] <= (OBS_DIM[1] // 2 + 1),  # col: 5 + 1 = 6
+        delta[:, 0] <= params.trade_radius,
+        delta[:, 1] <= params.trade_radius,
     )
 
     is_giving = jnp.logical_and(
@@ -3439,7 +3479,7 @@ def trade_materials(state, action, params, static_params): # only trade with age
         state.player_alive[player_trading_to]        
     )
 
-    def _new_material_value(material_type, current_material_stock, material_max_value, old_trade_count, old_same, old_diff):
+    def _new_material_value(material_type, current_material_stock, material_max_value, old_trade_count, old_same):
         other_player_is_requesting_material = jnp.logical_and(
             other_player_is_requesting,
             state.request_type[player_trading_to] == material_type
@@ -3464,18 +3504,13 @@ def trade_materials(state, action, params, static_params): # only trade with age
             is_giving_material,
             giver_subclass == receiver_subclass
         ).sum()
-        diff_trade = old_diff + jnp.logical_and(
-            is_giving_material,
-            giver_subclass != receiver_subclass
-        ).sum()
-        return new_material, new_trade, same_trade, diff_trade
+        return new_material, new_trade, same_trade
     
     # Food
     food_trade_count = 0
     same_food = 0
-    diff_food = 0
-    new_food, food_trade_count, same_food, diff_food = _new_material_value(
-        Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count, same_food, diff_food
+    new_food, food_trade_count, same_food = _new_material_value(
+        Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count, same_food
     )
     new_hunger = jnp.where(new_food>state.player_food, 0.0, state.player_hunger)
     new_achievements = new_achievements.at[:, Achievement.COLLECT_FOOD.value].set(
@@ -3486,14 +3521,12 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_food_trade_count += food_trade_count
     new_trade_count += food_trade_count
     new_same_trade_count += same_food
-    new_diff_trade_count += diff_food
     
     # Drink
     drink_trade_count = 0
     same_drink = 0
-    diff_drink = 0
-    new_drink, drink_trade_count, same_drink, diff_drink = _new_material_value(
-        Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count, same_drink, diff_drink
+    new_drink, drink_trade_count, same_drink = _new_material_value(
+        Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count, same_drink
     )
     new_thirst = jnp.where(new_drink>state.player_drink, 0.0, state.player_thirst)
     new_achievements = new_achievements.at[:, Achievement.COLLECT_DRINK.value].set(
@@ -3504,37 +3537,34 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_drink_trade_count += drink_trade_count
     new_trade_count += drink_trade_count
     new_same_trade_count += same_drink
-    new_diff_trade_count += diff_drink
 
     # Inventory Materials
     wood_trade_count = 0
     same_wood = 0
-    diff_wood = 0
-    new_wood, wood_trade_count, same_wood, diff_wood = _new_material_value(
-        Action.REQUEST_WOOD.value, state.inventory.wood, 99, wood_trade_count, same_wood, diff_wood
+    new_wood, wood_trade_count, same_wood = _new_material_value(
+        Action.REQUEST_WOOD.value, state.inventory.wood, 99, wood_trade_count, same_wood
     )
     new_wood_trade_count += wood_trade_count
     new_trade_count += wood_trade_count
     new_same_trade_count += same_wood
-    new_diff_trade_count += diff_wood
 
-    new_stone, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_STONE.value, state.inventory.stone, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_stone, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_STONE.value, state.inventory.stone, 99, new_trade_count, new_same_trade_count
     )
-    new_iron, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_IRON.value, state.inventory.iron, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_iron, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_IRON.value, state.inventory.iron, 99, new_trade_count, new_same_trade_count
     )
-    new_coal, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_COAL.value, state.inventory.coal, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_coal, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_COAL.value, state.inventory.coal, 99, new_trade_count, new_same_trade_count
     )
-    new_diamond, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_DIAMOND.value, state.inventory.diamond, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_diamond, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_DIAMOND.value, state.inventory.diamond, 99, new_trade_count, new_same_trade_count
     )
-    new_ruby, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_RUBY.value, state.inventory.ruby, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_ruby, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_RUBY.value, state.inventory.ruby, 99, new_trade_count, new_same_trade_count
     )
-    new_sapphire, new_trade_count, new_same_trade_count, new_diff_trade_count = _new_material_value(
-        Action.REQUEST_SAPPHIRE.value, state.inventory.sapphire, 99, new_trade_count, new_same_trade_count, new_diff_trade_count
+    new_sapphire, new_trade_count, new_same_trade_count = _new_material_value(
+        Action.REQUEST_SAPPHIRE.value, state.inventory.sapphire, 99, new_trade_count, new_same_trade_count
     )
         
     state = state.replace(
@@ -3557,7 +3587,6 @@ def trade_materials(state, action, params, static_params): # only trade with age
         drink_trade_count=new_drink_trade_count,
         wood_trade_count=new_wood_trade_count,
         same_trade_count=new_same_trade_count,
-        diff_trade_count=new_diff_trade_count,
     )
     return state
 
@@ -3725,8 +3754,18 @@ def craftax_step(
 
     individual_vanilla_reward = achievement_reward + vanilla_health_reward
     individual_foraging_reward = health_reward + food_reward + drink_reward + energy_reward + alive_reward
-    # Zero out reward for dead players to prevent frozen stats from generating positive reward.
-    individual_foraging_reward = jnp.where(current_player_alive, individual_foraging_reward, 0.0)
+    # For dead players, either keep zero reward (default) or apply max negative foraging-step reward.
+    # Foraging components when dead: health/food/drink/energy can each be -0.1, alive term is 0.0.
+    dead_foraging_reward = jax.lax.select(
+        params.allow_neg_reward_if_dead,
+        jnp.asarray(-0.4, dtype=individual_foraging_reward.dtype),
+        jnp.asarray(0.0, dtype=individual_foraging_reward.dtype),
+    )
+    individual_foraging_reward = jnp.where(
+        current_player_alive,
+        individual_foraging_reward,
+        dead_foraging_reward,
+    )
 
     individual_reward = jax.lax.select(
         params.reward_func == 'foraging',
@@ -3756,6 +3795,16 @@ def craftax_step(
 
     player_alive = state.player_health > 0.0
 
+    # Track per-agent steps alive
+    new_steps_alive = state.steps_alive + player_alive.astype(jnp.float32)
+
+    # Track per-team alive time (tick counts if ANY member is alive)
+    agents_per_team = len(static_params.team_composition)
+    # Reshape to (num_teams, agents_per_team) and check if any alive per team
+    player_alive_by_team = player_alive.reshape(static_params.num_teams, agents_per_team)
+    team_has_alive_member = player_alive_by_team.any(axis=1).astype(jnp.float32)
+    new_team_alive_time = state.team_alive_time + team_has_alive_member
+
     rng, _rng = jax.random.split(rng)
 
     state = state.replace(
@@ -3763,6 +3812,8 @@ def craftax_step(
         timestep=state.timestep + 1,
         light_level=calculate_light_level(state.timestep + 1, params),
         state_rng=_rng,
+        steps_alive=new_steps_alive,
+        team_alive_time=new_team_alive_time,
     )
 
-    return state, reward
+    return state, reward, individual_reward
