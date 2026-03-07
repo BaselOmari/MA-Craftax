@@ -7,7 +7,62 @@ from craftax_coop.constants import *
 def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     achievements = state.achievements * done * 100.0
     info = {}
+    # Single-level (fixed dungeon level 2) run:
+    # Skip achievements that are structurally unreachable in this setup.
+    excluded_achievements_level2 = {
+        # Level transitions are disabled in single-level mode.
+        "ENTER_GNOMISH_MINES",
+        "ENTER_DUNGEON",
+        "ENTER_SEWERS",
+        "ENTER_VAULT",
+        "ENTER_TROLL_MINES",
+        "ENTER_FIRE_REALM",
+        "ENTER_ICE_REALM",
+        "ENTER_GRAVEYARD",
+        # Mobs/bosses from other levels.
+        # On fixed level 2, FLOOR_MOB_MAPPING only spawns:
+        # passive=snail, melee=orc soldier, ranged=orc mage.
+        "DEFEAT_ZOMBIE",
+        "DEFEAT_SKELETON",
+        "DEFEAT_GNOME_WARRIOR",
+        "DEFEAT_GNOME_ARCHER",
+        "DEFEAT_LIZARD",
+        "DEFEAT_KOBOLD",
+        "DEFEAT_KNIGHT",
+        "DEFEAT_ARCHER",
+        "DEFEAT_TROLL",
+        "DEFEAT_DEEP_THING",
+        "DEFEAT_PIGMAN",
+        "DEFEAT_FIRE_ELEMENTAL",
+        "DEFEAT_FROST_TROLL",
+        "DEFEAT_ICE_ELEMENTAL",
+        "DAMAGE_NECROMANCER",
+        "DEFEAT_NECROMANCER",
+        # Passive mobs not present on fixed level 2.
+        "EAT_COW",
+        "EAT_BAT",
+        # Action-disabled / unreachable progression in this setup.
+        "DRINK_POTION",
+        "LEARN_SPELL",
+        "CAST_SPELL",
+        "ENCHANT_SWORD",
+        "ENCHANT_ARMOUR",
+        "MAKE_IRON_ARMOUR",
+        "MAKE_DIAMOND_ARMOUR",
+        # Bow is only looted from the first chest on level 1.
+        "FIND_BOW",
+        "FIRE_BOW",
+        # No source of sword level >=3 with current single-level action mask.
+        "MAKE_IRON_SWORD",
+        "MAKE_DIAMOND_SWORD",
+        # Currently never set in game logic.
+        "GIVE_ITEM",
+        "Random_1",
+        "Random_2",
+    }
     for achievement in Achievement:
+        if achievement.name in excluded_achievements_level2:
+            continue
         achievement_name = f"Achievements/{achievement.name.lower()}"
         info[achievement_name] = achievements[:, achievement.value]
 
@@ -15,10 +70,6 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     info["Trade/total_trades"] = jnp.full(static_params.player_count, state.trade_count, dtype=jnp.float32)
     info["Trade/food_trades"] = jnp.full(static_params.player_count, state.food_trade_count, dtype=jnp.float32)
     info["Trade/drink_trades"] = jnp.full(static_params.player_count, state.drink_trade_count, dtype=jnp.float32)
-    info["Trade/wood_trades"] = jnp.full(static_params.player_count, state.wood_trade_count, dtype=jnp.float32)
-    info["Trade/same_subclass_trades"] = jnp.full(static_params.player_count, state.same_trade_count, dtype=jnp.float32)
-    diff_trade_count = jnp.maximum(0, state.trade_count - state.same_trade_count)
-    info["Trade/diff_subclass_trades"] = jnp.full(static_params.player_count, diff_trade_count, dtype=jnp.float32)
 
     # Team kill metrics (broadcast to match player dimension)
     for t in range(static_params.num_teams):
@@ -27,31 +78,10 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
 
     # Per-agent metrics
     info["Movement/walking_distance"] = state.walking_distance.astype(jnp.float32)
-    info["Movement/ticks_moved"] = state.ticks_moved.astype(jnp.float32)
-    info["Movement/ticks_tried_moving"] = state.ticks_tried_moving.astype(jnp.float32)
-    info["Combat/damage_taken_total"] = state.damage_taken_total.astype(jnp.float32)
     info["Combat/damage_taken_melee"] = state.damage_taken_melee.astype(jnp.float32)
-    info["Combat/damage_taken_ranged"] = state.damage_taken_ranged.astype(jnp.float32)
-    info["Combat/damage_taken_health"] = state.damage_taken_health.astype(jnp.float32)
     info["Combat/damage_taken_health_food"] = state.damage_taken_health_food.astype(jnp.float32)
     info["Combat/damage_taken_health_drink"] = state.damage_taken_health_drink.astype(jnp.float32)
     info["Combat/damage_taken_health_energy"] = state.damage_taken_health_energy.astype(jnp.float32)
     info["Combat/damage_taken_health_other"] = state.damage_taken_health_other.astype(jnp.float32)
     info["Combat/damage_taken_ff"] = state.damage_taken_ff.astype(jnp.float32)
-    info["Necessities/ticks_food_empty"] = state.ticks_food_empty.astype(jnp.float32)
-    info["Necessities/ticks_drink_empty"] = state.ticks_drink_empty.astype(jnp.float32)
-    info["Necessities/ticks_energy_empty"] = state.ticks_energy_empty.astype(jnp.float32)
-
-    # Alive tracking: per-agent alive_ratio = steps_alive / team_alive_time
-    agents_per_team = len(static_params.team_composition)
-    agent_team_ids = jnp.arange(static_params.player_count) // agents_per_team
-    agent_team_alive_time = state.team_alive_time[agent_team_ids]
-    alive_ratio = jnp.where(agent_team_alive_time > 0, state.steps_alive / agent_team_alive_time, 0.0)
-    info["Alive/alive_ratio"] = alive_ratio.astype(jnp.float32)
-    for t in range(static_params.num_teams):
-        info[f"Alive/team_{t}_alive_time"] = jnp.full(static_params.player_count, state.team_alive_time[t], dtype=jnp.float32)
-
-    # Revives (broadcast scalar)
-    info["Overview/revives"] = jnp.full(static_params.player_count, state.revives, dtype=jnp.float32)
-
     return info

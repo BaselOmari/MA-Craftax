@@ -198,8 +198,13 @@ def make_train(config, env):
     )
     _video_max_length = int(config.get("MAX_VIDEO_LENGTH", -1))
 
-    env = LogWrapper(env)
-    env = VideoPlotWrapper(env, './output/', 256, False)
+    # Two env references to avoid VideoPlotWrapper overhead during training:
+    # env_train: LogWrapper only — used for training steps (no mob distance calculations)
+    # env_log:   LogWrapper + VideoPlotWrapper — used for CSV logging steps (adds health, food, mob distances etc.)
+    # Both share the same state structure (VideoPlotWrapper is a pass-through for state).
+    env_train = LogWrapper(env)
+    env_log = VideoPlotWrapper(env_train, './output/', 256, False)
+    env = env_log  # default reference for property access (agents, num_agents, action_space, etc.)
 
     def linear_schedule(count):
         frac = (
@@ -277,7 +282,7 @@ def make_train(config, env):
         # INIT ENV
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
-        obsv, env_state = jax.vmap(env.reset, in_axes=(0,))(reset_rng)
+        obsv, env_state = jax.vmap(env_train.reset, in_axes=(0,))(reset_rng)
         # Hidden state shape: (num_agents, num_envs, hidden_dim)
         init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"], config["GRU_HIDDEN_DIM"])
         init_hstate = jnp.tile(init_hstate[np.newaxis, :, :], (env.num_agents, 1, 1))
@@ -287,7 +292,14 @@ def make_train(config, env):
         init_done["__all__"] = jnp.zeros((config["NUM_ENVS"],), dtype=bool)
 
         # TRAIN LOOP
-        def _env_step(runner_state, unused):
+        # detailed_logging: when True, extra per-step fields (hidden_state, entropy,
+        # log_prob, deltas, etc.) are added to info for CSV logging.  When False
+        # (training path), these fields are omitted to save ~256 MB+ GPU memory
+        # per update that would otherwise be accumulated by jax.lax.scan.
+        # Use functools.partial to set the flag at compile time so JAX can
+        # eliminate the dead code path entirely.
+
+        def _env_step(runner_state, unused, detailed_logging=False):
             train_state, env_state, last_obs, last_done, hstate, rng = runner_state
 
             # SELECT ACTION
@@ -297,14 +309,14 @@ def make_train(config, env):
             # done_batch shape: (num_agents, num_envs)
             # last_done is a dict from env, convert to array
             done_batch_in = batchify(last_done, env.agents)
-            
+
             # Forward pass for each agent with their own params
             # ac_in: (1, num_envs, obs_dim), (1, num_envs)
             # hstate: (num_agents, num_envs, hidden_dim)
             def forward_single_agent(params, hs, obs, done):
                 ac_in = (obs[np.newaxis, :], done[np.newaxis, :])
                 return network.apply({"params": params}, hs, ac_in)
-            
+
             hstate, pi, value, aux_pred = jax.vmap(forward_single_agent)(
                 train_state.params,  # (num_agents, ...)
                 hstate,              # (num_agents, num_envs, hidden_dim)
@@ -314,26 +326,30 @@ def make_train(config, env):
             # pi.logits shape: (num_agents, 1, num_envs, action_dim)
             # value shape: (num_agents, 1, num_envs)
             # aux_pred shape: (num_agents, 1, num_envs, 2)
-            
+
             # Sample actions - distrax is batch-aware, sample directly
             # pi.logits: (num_agents, 1, num_envs, action_dim)
             action = pi.sample(seed=_rng)  # (num_agents, 1, num_envs)
             log_prob = pi.log_prob(action)  # (num_agents, 1, num_envs)
-            
+
             action = action.squeeze(axis=1)      # (num_agents, num_envs)
             log_prob = log_prob.squeeze(axis=1)  # (num_agents, num_envs)
             value = value.squeeze(axis=1)        # (num_agents, num_envs)
-            
+
             env_act = unbatchify(action, env.agents)
             env_act = {k: v.squeeze() for k, v in env_act.items()}
 
             # STEP ENV
+            # Use env_log (with VideoPlotWrapper) only during logging to get CSV fields
+            # (health, food, mob distances, etc.). During training, use env_train
+            # (LogWrapper only) to skip expensive mob distance calculations.
             rng, _rng = jax.random.split(rng)
             rng_step = jax.random.split(_rng, config["NUM_ENVS"])
+            step_fn = env_log.step if detailed_logging else env_train.step
             obsv, env_state, reward, done, info = jax.vmap(
-                env.step, in_axes=(0, 0, 0)
+                step_fn, in_axes=(0, 0, 0)
             )(rng_step, env_state, env_act)
-            
+
             done_batch = batchify(done, env.agents)  # (num_agents, num_envs)
             reward_batch = batchify(reward, env.agents)  # (num_agents, num_envs)
 
@@ -345,7 +361,7 @@ def make_train(config, env):
                 env_state.env_state.player_position - env_state.env_state.player_spawn_position,
                 (1, 0, 2)
             )
-            
+
             transition = Transition(
                 jnp.tile(done["__all__"][np.newaxis, :], (env.num_agents, 1)),  # (num_agents, num_envs)
                 done_batch_in,   # (num_agents, num_envs)
@@ -358,22 +374,23 @@ def make_train(config, env):
                 info,
             )
 
-            # Add hstate and other non-env metrics to info so they can be logged
-            info['action'] = action           # (num_agents, num_envs)
-            info['done'] = done_batch         # (num_agents, num_envs)
-            info['value'] = value             # (num_agents, num_envs)
-            info['hidden_state'] = hstate     # (num_agents, num_envs, hidden_dim)
-            # pi.entropy() returns (num_agents, 1, num_envs) - squeeze axis 1
-            info['entropy'] = pi.entropy().squeeze(1)  # (num_agents, num_envs)
-            info['log_prob'] = log_prob       # (num_agents, num_envs)
-            # Auxiliary predictions and ground truth for CSV logging
-            # deltas_to_start: (num_agents, num_envs, 2) - relative displacement from spawn
-            info['delta_x'] = deltas_to_start[:, :, 0]        # (num_agents, num_envs)
-            info['delta_y'] = deltas_to_start[:, :, 1]        # (num_agents, num_envs)
-            # aux_pred: (num_agents, 1, num_envs, 2) -> squeeze to (num_agents, num_envs, 2)
-            aux_pred_squeezed = aux_pred.squeeze(axis=1)       # (num_agents, num_envs, 2)
-            info['pred_delta_x'] = aux_pred_squeezed[:, :, 0]  # (num_agents, num_envs)
-            info['pred_delta_y'] = aux_pred_squeezed[:, :, 1]  # (num_agents, num_envs)
+            # Extra per-step fields for CSV logging — only computed in logging iterations
+            if detailed_logging:
+                info['action'] = action           # (num_agents, num_envs)
+                info['done'] = done_batch         # (num_agents, num_envs)
+                info['value'] = value             # (num_agents, num_envs)
+                info['hidden_state'] = hstate     # (num_agents, num_envs, hidden_dim)
+                # pi.entropy() returns (num_agents, 1, num_envs) - squeeze axis 1
+                info['entropy'] = pi.entropy().squeeze(1)  # (num_agents, num_envs)
+                info['log_prob'] = log_prob       # (num_agents, num_envs)
+                # Auxiliary predictions and ground truth for CSV logging
+                # deltas_to_start: (num_agents, num_envs, 2) - relative displacement from spawn
+                info['delta_x'] = deltas_to_start[:, :, 0]        # (num_agents, num_envs)
+                info['delta_y'] = deltas_to_start[:, :, 1]        # (num_agents, num_envs)
+                # aux_pred: (num_agents, 1, num_envs, 2) -> squeeze to (num_agents, num_envs, 2)
+                aux_pred_squeezed = aux_pred.squeeze(axis=1)       # (num_agents, num_envs, 2)
+                info['pred_delta_x'] = aux_pred_squeezed[:, :, 0]  # (num_agents, num_envs)
+                info['pred_delta_y'] = aux_pred_squeezed[:, :, 1]  # (num_agents, num_envs)
 
             # Keep done as dict for next iteration (env returns dict)
             runner_state = (train_state, env_state, obsv, done, hstate, rng)
@@ -702,7 +719,7 @@ def make_train(config, env):
 
             rng = update_state[-1]
 
-            def callback(metrics, actor_state: TrainState, step):
+            def callback(metrics, step):
                 env_step = (
                     metrics["update_steps"]
                     * config["NUM_ENVS"]
@@ -717,20 +734,8 @@ def make_train(config, env):
                 # Derive agent count from runtime tensors (safer than config-only math).
                 num_agents = int(np.asarray(metrics["loss_per_agent"]["total_loss"]).shape[0])
 
-                # Derive team count from runtime user_info when available.
-                info_for_layout = metrics.get("user_info", {})
-                runtime_team_ids = []
-                for key in info_for_layout.keys():
-                    if key.startswith("Alive/team_") and key.endswith("_alive_time"):
-                        try:
-                            team_id_str = key[len("Alive/team_"):-len("_alive_time")]
-                            runtime_team_ids.append(int(team_id_str))
-                        except ValueError:
-                            continue
-                if runtime_team_ids:
-                    num_teams = max(runtime_team_ids) + 1
-                else:
-                    num_teams = max(1, configured_num_teams)
+                # Team count is configuration-driven for stable logging layout.
+                num_teams = max(1, configured_num_teams)
 
                 # Keep team layout valid even if config/runtime diverge.
                 num_teams = max(1, min(num_teams, num_agents))
@@ -791,7 +796,15 @@ def make_train(config, env):
                     mask0 = ep_mask[:, :, 0]
                     if mask0.any():
                         to_log["overview/episode_length"] = np.asarray(ep_lengths[:, :, 0][mask0].mean()).item()
-                        to_log["overview/avg_reward"] = np.asarray(ep_returns[:, :, 0][mask0].mean()).item()
+
+                    # Overview reward as mean across all agents (agent-weighted).
+                    all_agent_returns = []
+                    for ai in range(num_agents):
+                        mask_ai = ep_mask[:, :, ai]
+                        if mask_ai.any():
+                            all_agent_returns.append(np.asarray(ep_returns[:, :, ai][mask_ai].mean()).item())
+                    if all_agent_returns:
+                        to_log["overview/avg_reward"] = float(np.mean(all_agent_returns))
 
                     # overview/ movement (mean walking distance across all agents)
                     all_walk = []
@@ -803,43 +816,10 @@ def make_train(config, env):
                         to_log["overview/movement"] = np.mean(all_walk)
 
                     # overview/ trades (broadcast scalars, take from agent 0)
-                    for trade_key in ["total_trades", "food_trades", "drink_trades",
-                                      "wood_trades", "same_subclass_trades", "diff_subclass_trades"]:
+                    for trade_key in ["total_trades", "food_trades", "drink_trades"]:
                         v = _global_mean(f"Trade/{trade_key}")
                         if v is not None:
                             to_log[f"overview/{trade_key}"] = v
-
-                    # overview/ revives
-                    v = _global_mean("Overview/revives")
-                    if v is not None:
-                        to_log["overview/revives"] = v
-
-                    # ── agent_{i}/ individual_reward + alive_ratio ──
-                    for ai in range(num_agents):
-                        # Use per-agent episode return for a stable individual reward metric.
-                        # The raw "Reward/individual_reward" in user_info is a per-step signal;
-                        # sampling it only on terminal steps is often ~0 when episodes end in death.
-                        mask_ai = ep_mask[:, :, ai]
-                        if mask_ai.any():
-                            to_log[f"agent_{ai}/individual_reward"] = np.asarray(
-                                ep_returns[:, :, ai][mask_ai].mean()
-                            ).item()
-
-                        # Keep terminal-step raw signal for debugging data flow.
-                        if "Reward/individual_reward" in info:
-                            v = _agent_mean("Reward/individual_reward", ai)
-                            if v is not None:
-                                to_log[f"agent_{ai}/individual_reward_terminal_step"] = v
-
-                        v = _agent_mean("Alive/alive_ratio", ai)
-                        if v is not None:
-                            to_log[f"agent_{ai}/alive_ratio"] = v
-
-                        # per-agent movement
-                        for mk in ["walking_distance", "ticks_moved", "ticks_tried_moving"]:
-                            v = _agent_mean(f"Movement/{mk}", ai)
-                            if v is not None:
-                                to_log[f"agent_{ai}/{mk}"] = v
 
                     # ── team_{t}/ metrics ──
                     for ti in range(num_teams):
@@ -854,26 +834,14 @@ def make_train(config, env):
                         if team_ret:
                             to_log[f"{tp}/shared_reward"] = np.mean(team_ret)
 
-                        # alive_time
-                        v = _global_mean(f"Alive/team_{ti}_alive_time")
-                        if v is not None:
-                            to_log[f"{tp}/alive_time"] = v
-
                         # walking_distance per team
-                        for mk in ["walking_distance", "ticks_moved", "ticks_tried_moving"]:
-                            v = _team_mean(f"Movement/{mk}", ti)
-                            if v is not None:
-                                to_log[f"{tp}/{mk}"] = v
-
-                        # necessities
-                        for nk in ["ticks_food_empty", "ticks_drink_empty", "ticks_energy_empty"]:
-                            v = _team_mean(f"Necessities/{nk}", ti)
-                            if v is not None:
-                                to_log[f"{tp}/{nk}"] = v
+                        v = _team_mean("Movement/walking_distance", ti)
+                        if v is not None:
+                            to_log[f"{tp}/walking_distance"] = v
 
                         # combat: damage taken (aggregated over team members)
-                        for dk in ["damage_taken_total", "damage_taken_melee", "damage_taken_ranged",
-                                   "damage_taken_health", "damage_taken_health_food", "damage_taken_health_drink",
+                        for dk in ["damage_taken_melee",
+                                   "damage_taken_health_food", "damage_taken_health_drink",
                                    "damage_taken_health_energy", "damage_taken_health_other", "damage_taken_ff"]:
                             v = _team_mean(f"Combat/{dk}", ti)
                             if v is not None:
@@ -898,7 +866,7 @@ def make_train(config, env):
 
                 wandb.log(to_log, step=metrics["update_steps"])
 
-            jax.experimental.io_callback(callback, None, metric, train_state, update_steps, ordered=True)
+            jax.experimental.io_callback(callback, None, metric, update_steps, ordered=True)
             update_steps = update_steps + 1
             runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
             return (runner_state, update_steps), metric
@@ -908,9 +876,9 @@ def make_train(config, env):
         # Several steps can be run in series using --logging_steps_per_viz to do long rollouts without hitting memory limits
         def _logging_step(carry, unused, logging_threads, update_step):
             runner_state, episode_count = carry
-            # Visualization rollouts
+            # Visualization rollouts (with detailed logging for CSV)
             runner_state, traj_batch = jax.lax.scan(
-                _env_step, runner_state, None, config["LOGGING_STEPS_PER_CALL"],
+                functools.partial(_env_step, detailed_logging=True), runner_state, None, config["LOGGING_STEPS_PER_CALL"],
             )
 
             # Finally, log data associated with the visualization runs
@@ -1099,11 +1067,11 @@ def make_train(config, env):
             # Note: no extra squeeze on env_act values — keeps the (1,) batch dim for vmap
             env_act = unbatchify(action, env.agents)  # {agent: (1,)}
 
-            # STEP 1 env
+            # STEP 1 env (use env_train — video doesn't need CSV fields)
             rng, _rng = jax.random.split(rng)
             rng_step = jax.random.split(_rng, 1)
             obsv, env_state, reward, done, info = jax.vmap(
-                env.step, in_axes=(0, 0, 0)
+                env_train.step, in_axes=(0, 0, 0)
             )(rng_step, env_state, env_act)
 
             # Render the single env
@@ -1158,7 +1126,7 @@ def make_train(config, env):
 
                 # Reset only 1 env for video (saves ~NUM_ENVS × video_length env-state memory)
                 video_reset_rngs = jax.random.split(rng_video, 1)
-                video_obsv, video_env_state = jax.vmap(env.reset, in_axes=(0,))(video_reset_rngs)
+                video_obsv, video_env_state = jax.vmap(env_train.reset, in_axes=(0,))(video_reset_rngs)
 
                 # Fresh hidden state (1 env) and done flags
                 video_hstate = jnp.zeros((env.num_agents, 1, config["GRU_HIDDEN_DIM"]))
