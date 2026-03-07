@@ -56,7 +56,6 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
 
         info = {}
         info["user_info"] = compute_score(state, done, self.static_env_params)
-        info["user_info"]["Reward/individual_reward"] = individual_reward
 
         # info["discount"] = self.discount(state, self.default_params)
         agent_rewards = {n: r for n,r in zip(self.agents, reward)}
@@ -118,14 +117,14 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
         )
 
     def get_teammate_dashboard_obs_shape(self):
-        num_players = self.static_env_params.player_count
+        agents_per_team = len(self.static_env_params.team_composition)
         num_health = 1
         num_alive = 1
         num_specialization = len(Specialization) - 1
         num_req_mats = (Action.REQUEST_SAPPHIRE.value - Action.REQUEST_FOOD.value + 1)
         num_directions = 8
 
-        return num_players * (num_health + num_alive + num_specialization + num_req_mats + num_directions)
+        return agents_per_team * (num_health + num_alive + num_specialization + num_req_mats) + self.static_env_params.player_count * num_directions
 
     def get_inventory_obs_shape(self):
         num_inventory = 16

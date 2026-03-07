@@ -255,20 +255,20 @@ def render_craftax_symbolic(state: EnvState, static_params: StaticEnvParams):
     )
 
     """
-    Teammate Dashboard
+    Teammate Dashboard (team-only)
         Includes:
             - Player Health
             - Player Dead or Alive
             - Specialization
             - Requested Material
-    Teammate Dashboard appears the same for all players
+    Only shows info about players on the SAME team.
     """
     players_health = state.player_health / 10.0
     players_alive = state.player_alive
     players_specialization = jax.nn.one_hot(state.player_specialization - Specialization.FORAGER.value, num_classes=3)
     requested_material = (
         jax.nn.one_hot(
-            state.request_type - Action.REQUEST_FOOD.value, 
+            state.request_type - Action.REQUEST_FOOD.value,
             num_classes=(Action.REQUEST_SAPPHIRE.value - Action.REQUEST_FOOD.value + 1)
         )
         * (state.request_duration > 0)[:, None]
@@ -277,7 +277,24 @@ def render_craftax_symbolic(state: EnvState, static_params: StaticEnvParams):
         (players_health[:, None], players_alive[:, None], players_specialization, requested_material),
         axis=-1
     )
-    teammate_dashboard = jax.vmap(lambda i: reorder_teammate_info(player_data, i))(jnp.arange(static_params.player_count))
+
+    agents_per_team = len(static_params.team_composition)
+
+    def reorder_team_only_info(player_data, player_index):
+        """Reorder so self is first, but only include same-team players."""
+        team_id = player_index // agents_per_team
+        team_start = team_id * agents_per_team
+        team_indices = team_start + jnp.arange(agents_per_team)
+        team_data = player_data[team_indices]
+        within_team_idx = player_index - team_start
+        idx = jnp.arange(agents_per_team)
+        i1 = (idx == 0) * within_team_idx
+        i2 = jnp.logical_and(idx > 0, idx <= within_team_idx) * (idx - 1)
+        i3 = (idx > within_team_idx) * idx
+        indices = i1 + i2 + i3
+        return team_data[indices].flatten()
+
+    teammate_dashboard = jax.vmap(lambda i: reorder_team_only_info(player_data, i))(jnp.arange(static_params.player_count))
 
     all_flattened = jnp.concatenate(
         [
