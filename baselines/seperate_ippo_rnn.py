@@ -106,7 +106,7 @@ class ActorCriticRNN(nn.Module):
             embedding
         )
         aux = nn.relu(aux)
-        aux = nn.Dense(2, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
+        aux = nn.Dense(self.config["AUX_OUTPUT_DIM"], kernel_init=orthogonal(1.0), bias_init=constant(0.0))(
             aux
         )
 
@@ -177,6 +177,7 @@ def make_train(config, env):
             f"Got LOGGING_THREADS={logging_threads}, NUM_ENVS={config['NUM_ENVS']}."
         )
 
+    config["NUM_AGENTS"] = env.num_agents
     config["NUM_ACTORS"] = env.num_agents * config["NUM_ENVS"]
     config["NUM_UPDATES"] = (
         config["TOTAL_TIMESTEPS"] // config["NUM_STEPS"] // config["NUM_ENVS"]
@@ -205,6 +206,45 @@ def make_train(config, env):
     env_train = LogWrapper(env)
     env_log = VideoPlotWrapper(env_train, './output/', 256, False)
     env = env_log  # default reference for property access (agents, num_agents, action_space, etc.)
+
+    # Auxiliary loss configuration
+    _n = env.num_agents
+    _agents_per_team = len(config.get("TEAM_COMPOSITION", [1, 1, 2]))
+    _aux_self_w = config.get("AUX_SELF_WEIGHT", 1.0)
+    _use_teammate_aux = config.get("USE_TEAMMATE_AUXILIARY_LOSS", True)
+    _aux_team_w = config.get("AUX_TEAMMATE_WEIGHT", 1/3) if _use_teammate_aux else 0.0
+
+    # AUX_OUTPUT_DIM: number of aux output values per agent
+    # Self-only: 2 (dx, dy). With teammates: agents_per_team * 2.
+    if _use_teammate_aux:
+        config["AUX_OUTPUT_DIM"] = _agents_per_team * 2
+    else:
+        config["AUX_OUTPUT_DIM"] = 2
+    _aux_output_dim = config["AUX_OUTPUT_DIM"]
+
+    # Build auxiliary loss weight mask: (num_agents, AUX_OUTPUT_DIM)
+    _aux_wm = np.zeros((_n, _aux_output_dim))
+    if _use_teammate_aux:
+        for _i in range(_n):
+            _self_team_idx = _i % _agents_per_team
+            for _j in range(_agents_per_team):
+                w = _aux_self_w if _j == _self_team_idx else _aux_team_w
+                _aux_wm[_i, _j * 2] = w
+                _aux_wm[_i, _j * 2 + 1] = w
+    else:
+        _aux_wm[:, 0] = _aux_self_w
+        _aux_wm[:, 1] = _aux_self_w
+    aux_weight_mask = jnp.array(_aux_wm)  # (num_agents, AUX_OUTPUT_DIM)
+
+    # Precompute team structure arrays for aux target computation
+    if _use_teammate_aux:
+        # _team_indices[i] = global indices of agent i's team members
+        _team_indices = np.array([
+            [(i // _agents_per_team) * _agents_per_team + j for j in range(_agents_per_team)]
+            for i in range(_n)
+        ])  # (N, agents_per_team)
+        _self_team_idx_arr = np.arange(_n) % _agents_per_team  # (N,)
+        _eye_team_4d = (np.arange(_agents_per_team)[None, :] == _self_team_idx_arr[:, None])[None, :, :, None]  # (1, N, apt, 1)
 
     def linear_schedule(count):
         frac = (
@@ -325,7 +365,7 @@ def make_train(config, env):
             )
             # pi.logits shape: (num_agents, 1, num_envs, action_dim)
             # value shape: (num_agents, 1, num_envs)
-            # aux_pred shape: (num_agents, 1, num_envs, 2)
+            # aux_pred shape: (num_agents, 1, num_envs, AUX_OUTPUT_DIM)
 
             # Sample actions - distrax is batch-aware, sample directly
             # pi.logits: (num_agents, 1, num_envs, action_dim)
@@ -353,14 +393,28 @@ def make_train(config, env):
             done_batch = batchify(done, env.agents)  # (num_agents, num_envs)
             reward_batch = batchify(reward, env.agents)  # (num_agents, num_envs)
 
-            # Auxiliary task: predict displacement from spawn position
-            # env_state.env_state.player_position shape: (num_envs, num_agents, 2)
-            # env_state.env_state.player_spawn_position shape: (num_envs, num_agents, 2)
-            # Compute relative displacement, then transpose to (num_agents, num_envs, 2)
-            deltas_to_start = jnp.transpose(
-                env_state.env_state.player_position - env_state.env_state.player_spawn_position,
-                (1, 0, 2)
-            )
+            # Auxiliary task targets (computed AFTER env.step so targets use position at t+1)
+            # all_pos / all_spawn: (num_envs, num_agents, 2)
+            all_pos = env_state.env_state.player_position
+            all_spawn = env_state.env_state.player_spawn_position
+            self_delta = all_pos - all_spawn  # (num_envs, N, 2)
+
+            if _use_teammate_aux:
+                # For each agent i, predict team-local positions at t+1:
+                #   slot k (k == self_team_idx): self displacement from spawn
+                #   slot k (k != self_team_idx): teammate k's position relative to self
+                team_pos = all_pos[:, _team_indices, :]  # (num_envs, N, agents_per_team, 2)
+                rel_pos = team_pos - all_pos[:, :, None, :]  # (num_envs, N, agents_per_team, 2)
+                aux_targets = jnp.where(_eye_team_4d, jnp.expand_dims(self_delta, 2), rel_pos)
+                # (num_envs, N, apt, 2) -> (num_envs, N, apt*2) -> (N, num_envs, apt*2)
+                deltas_to_start = jnp.transpose(
+                    aux_targets.reshape(aux_targets.shape[0], _n, _agents_per_team * 2),
+                    (1, 0, 2)
+                )
+            else:
+                # Self-only: predict own displacement from spawn at t+1
+                # (num_envs, N, 2) -> (N, num_envs, 2)
+                deltas_to_start = jnp.transpose(self_delta, (1, 0, 2))
 
             transition = Transition(
                 jnp.tile(done["__all__"][np.newaxis, :], (env.num_agents, 1)),  # (num_agents, num_envs)
@@ -370,7 +424,7 @@ def make_train(config, env):
                 reward_batch,    # (num_agents, num_envs)
                 log_prob,        # (num_agents, num_envs)
                 obs_batch,       # (num_agents, num_envs, obs_dim)
-                deltas_to_start, # (num_agents, num_envs, 2)
+                deltas_to_start, # (num_agents, num_envs, AUX_OUTPUT_DIM)
                 info,
             )
 
@@ -384,13 +438,29 @@ def make_train(config, env):
                 info['entropy'] = pi.entropy().squeeze(1)  # (num_agents, num_envs)
                 info['log_prob'] = log_prob       # (num_agents, num_envs)
                 # Auxiliary predictions and ground truth for CSV logging
-                # deltas_to_start: (num_agents, num_envs, 2) - relative displacement from spawn
-                info['delta_x'] = deltas_to_start[:, :, 0]        # (num_agents, num_envs)
-                info['delta_y'] = deltas_to_start[:, :, 1]        # (num_agents, num_envs)
-                # aux_pred: (num_agents, 1, num_envs, 2) -> squeeze to (num_agents, num_envs, 2)
-                aux_pred_squeezed = aux_pred.squeeze(axis=1)       # (num_agents, num_envs, 2)
-                info['pred_delta_x'] = aux_pred_squeezed[:, :, 0]  # (num_agents, num_envs)
-                info['pred_delta_y'] = aux_pred_squeezed[:, :, 1]  # (num_agents, num_envs)
+                # aux_pred: (num_agents, 1, num_envs, AUX_OUTPUT_DIM) -> squeeze
+                aux_pred_squeezed = aux_pred.squeeze(axis=1)  # (num_agents, num_envs, AUX_OUTPUT_DIM)
+                if _use_teammate_aux:
+                    # deltas_to_start: (num_agents, num_envs, agents_per_team*2)
+                    # Self-delta is at team-local slot _self_team_idx_arr[i]
+                    _aidx = jnp.arange(env.num_agents)
+                    _stidx = jnp.array(_self_team_idx_arr)
+                    info['delta_x'] = deltas_to_start[_aidx, :, _stidx * 2]            # (num_agents, num_envs)
+                    info['delta_y'] = deltas_to_start[_aidx, :, _stidx * 2 + 1]        # (num_agents, num_envs)
+                    info['pred_delta_x'] = aux_pred_squeezed[_aidx, :, _stidx * 2]     # (num_agents, num_envs)
+                    info['pred_delta_y'] = aux_pred_squeezed[_aidx, :, _stidx * 2 + 1] # (num_agents, num_envs)
+                    # Per team-local slot logging
+                    for _j in range(_agents_per_team):
+                        info[f'delta_x_{_j}'] = deltas_to_start[:, :, _j * 2]              # (num_agents, num_envs)
+                        info[f'delta_y_{_j}'] = deltas_to_start[:, :, _j * 2 + 1]          # (num_agents, num_envs)
+                        info[f'pred_delta_x_{_j}'] = aux_pred_squeezed[:, :, _j * 2]       # (num_agents, num_envs)
+                        info[f'pred_delta_y_{_j}'] = aux_pred_squeezed[:, :, _j * 2 + 1]   # (num_agents, num_envs)
+                else:
+                    # deltas_to_start: (num_agents, num_envs, 2) — self-only
+                    info['delta_x'] = deltas_to_start[:, :, 0]        # (num_agents, num_envs)
+                    info['delta_y'] = deltas_to_start[:, :, 1]        # (num_agents, num_envs)
+                    info['pred_delta_x'] = aux_pred_squeezed[:, :, 0] # (num_agents, num_envs)
+                    info['pred_delta_y'] = aux_pred_squeezed[:, :, 1] # (num_agents, num_envs)
 
             # Keep done as dict for next iteration (env returns dict)
             runner_state = (train_state, env_state, obsv, done, hstate, rng)
@@ -495,7 +565,7 @@ def make_train(config, env):
                         # Transpose back to (num_steps, num_agents, num_envs_minibatch)
                         log_prob = jnp.transpose(log_prob, (1, 0, 2))
                         value = jnp.transpose(value, (1, 0, 2))
-                        aux = jnp.transpose(aux, (1, 0, 2, 3))  # (num_steps, num_agents, num_envs_minibatch, 2)
+                        aux = jnp.transpose(aux, (1, 0, 2, 3))  # (num_steps, num_agents, num_envs_minibatch, AUX_OUTPUT_DIM)
                         
                         # CALCULATE VALUE LOSS
                         # Shape: (num_steps, num_agents, num_envs_minibatch)
@@ -538,11 +608,11 @@ def make_train(config, env):
                         entropy_per_agent = entropy_per_elem.mean(axis=(1, 2))  # (num_agents,)
                         entropy = entropy_per_agent.mean()  # scalar for gradient
 
-                        # Calculate auxiliary loss (predict displacement from spawn)
-                        # Simple L2
-                        # aux and train_batch.deltas_to_start both have shape (num_steps, num_agents, num_envs_minibatch, 2)
-                        aux_loss_per_elem = jnp.square(aux - train_batch.deltas_to_start)  # (num_steps, num_agents, num_envs_minibatch, 2)
-                        aux_loss_per_agent = aux_loss_per_elem.mean(axis=(0, 2, 3))  # (num_agents,) - mean over steps, envs, and position dims
+                        # Calculate auxiliary loss (predict self-displacement + optionally teammate positions)
+                        # aux, train_batch.deltas_to_start: (num_steps, num_agents, num_envs_minibatch, AUX_OUTPUT_DIM)
+                        # aux_weight_mask: (num_agents, AUX_OUTPUT_DIM) -> broadcast (1, num_agents, 1, AUX_OUTPUT_DIM)
+                        aux_loss_per_elem = jnp.square(aux - train_batch.deltas_to_start) * aux_weight_mask[None, :, None, :]
+                        aux_loss_per_agent = aux_loss_per_elem.mean(axis=(0, 2, 3))  # (num_agents,)
                         aux_loss = aux_loss_per_agent.mean()  # scalar for gradient
 
                         # debug - per agent
@@ -912,6 +982,9 @@ def make_train(config, env):
                              'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
                              'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
                              'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
+                             ] + ([f'{k}_{j}' for j in range(_agents_per_team)
+                                   for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
+                                  if _use_teammate_aux else []) + [
                              'num_monsters_killed',
                              'has_sword', 'has_pick', 'held_iron', 'value',
                              'entropy', 'log_prob', 'episode_id',
@@ -928,6 +1001,9 @@ def make_train(config, env):
                                       'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby',
                                       'num_ranged_nearby',
                                       'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
+                                      ] + ([f'{k}_{j}' for j in range(_agents_per_team)
+                                            for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
+                                           if _use_teammate_aux else []) + [
                                       'num_monsters_killed',
                                       'has_sword',
                                       'has_pick', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
@@ -974,7 +1050,10 @@ def make_train(config, env):
             # - Network outputs (action, done, value, entropy, log_prob) have shape (T, num_agents, NUM_ENVS)
             # - Environment fields (health, food, etc.) have shape (T, NUM_ENVS, num_agents)
             network_output_fields = {'value', 'entropy', 'log_prob', 'done', 'action', 'episode_id',
-                                     'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y'}
+                                     'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y'} | (
+                                     {f'{k}_{j}' for j in range(_agents_per_team)
+                                      for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')}
+                                     if _use_teammate_aux else set())
             
             def add_field_to_log_array(info_dict, log_array, field_key, agent_to_log):
                 field_value = info_dict[field_key]

@@ -756,7 +756,8 @@ def generate_world(rng, params, static_params):
         static_params.max_passive_mobs * static_params.player_count
     )
 
-    # Pre-spawn one snail per team in each team's spawn room
+    # Pre-spawn 1-3 snails per team in each team's spawn room
+    MAX_SNAILS_PER_TEAM = 3
     snail_type_id = FLOOR_MOB_MAPPING[START_LEVEL, MobType.PASSIVE.value]
     snail_health = MOB_TYPE_HEALTH_MAPPING[snail_type_id, MobType.PASSIVE.value]
     snail_spawn_offsets = jnp.array(
@@ -778,30 +779,54 @@ def generate_world(rng, params, static_params):
         ],
         dtype=jnp.int32,
     )
+    rng, _snail_rng = jax.random.split(rng)
+    snail_count_rngs = jax.random.split(_snail_rng, num_teams)
     for t in range(num_teams):
+        # Randomly choose 1-3 snails for this team
+        num_snails = jax.random.randint(snail_count_rngs[t], (), 1, MAX_SNAILS_PER_TEAM + 1)
+
         room_min = team_room_positions_all[t]
         room_max = team_room_positions_all[t] + team_room_sizes_all[t] - 1
-        default_pos = jnp.clip(team_centers_all[t] + jnp.array([0, 1]), room_min, room_max)
-        snail_pos = default_pos
-        has_selected_pos = jnp.asarray(False)
 
-        # Pick a small offset near the room center that is not occupied by a player.
-        for offset in snail_spawn_offsets:
-            candidate_pos = jnp.clip(team_centers_all[t] + offset, room_min, room_max)
-            collides_with_player = (player_position == candidate_pos[None, :]).all(axis=1).any()
-            candidate_block = map[START_LEVEL, candidate_pos[0], candidate_pos[1]]
-            is_walkable = jnp.logical_not(jnp.isin(candidate_block, jnp.array(SOLID_BLOCKS)))
-            can_use_candidate = jnp.logical_and(jnp.logical_not(collides_with_player), is_walkable)
-            take_candidate = jnp.logical_and(jnp.logical_not(has_selected_pos), can_use_candidate)
-            snail_pos = jnp.where(take_candidate, candidate_pos, snail_pos)
-            has_selected_pos = jnp.logical_or(has_selected_pos, take_candidate)
+        for s in range(MAX_SNAILS_PER_TEAM):
+            should_spawn = s < num_snails
+            default_pos = jnp.clip(team_centers_all[t] + snail_spawn_offsets[0], room_min, room_max)
+            snail_pos = default_pos
+            has_selected_pos = jnp.asarray(False)
 
-        passive_mobs = passive_mobs.replace(
-            position=passive_mobs.position.at[START_LEVEL, t].set(snail_pos),
-            health=passive_mobs.health.at[START_LEVEL, t].set(snail_health),
-            mask=passive_mobs.mask.at[START_LEVEL, t].set(True),
-            type_id=passive_mobs.type_id.at[START_LEVEL, t].set(snail_type_id),
-        )
+            # Pick a small offset near the room center not occupied by a player or another snail.
+            for offset in snail_spawn_offsets:
+                candidate_pos = jnp.clip(team_centers_all[t] + offset, room_min, room_max)
+                collides_with_player = (player_position == candidate_pos[None, :]).all(axis=1).any()
+                # Check collision with already-placed snails for this team
+                collides_with_snail = jnp.asarray(False)
+                for prev_s in range(s):
+                    prev_pos = passive_mobs.position[START_LEVEL, t * MAX_SNAILS_PER_TEAM + prev_s]
+                    prev_active = passive_mobs.mask[START_LEVEL, t * MAX_SNAILS_PER_TEAM + prev_s]
+                    same_pos = jnp.logical_and(prev_active, (candidate_pos == prev_pos).all())
+                    collides_with_snail = jnp.logical_or(collides_with_snail, same_pos)
+                candidate_block = map[START_LEVEL, candidate_pos[0], candidate_pos[1]]
+                is_walkable = jnp.logical_not(jnp.isin(candidate_block, jnp.array(SOLID_BLOCKS)))
+                no_collision = jnp.logical_and(
+                    jnp.logical_not(collides_with_player),
+                    jnp.logical_not(collides_with_snail),
+                )
+                can_use_candidate = jnp.logical_and(no_collision, is_walkable)
+                take_candidate = jnp.logical_and(jnp.logical_not(has_selected_pos), can_use_candidate)
+                snail_pos = jnp.where(take_candidate, candidate_pos, snail_pos)
+                has_selected_pos = jnp.logical_or(has_selected_pos, take_candidate)
+
+            mob_idx = t * MAX_SNAILS_PER_TEAM + s
+            passive_mobs = passive_mobs.replace(
+                position=passive_mobs.position.at[START_LEVEL, mob_idx].set(
+                    jnp.where(should_spawn, snail_pos, passive_mobs.position[START_LEVEL, mob_idx])),
+                health=passive_mobs.health.at[START_LEVEL, mob_idx].set(
+                    jnp.where(should_spawn, snail_health, passive_mobs.health[START_LEVEL, mob_idx])),
+                mask=passive_mobs.mask.at[START_LEVEL, mob_idx].set(
+                    jnp.where(should_spawn, True, passive_mobs.mask[START_LEVEL, mob_idx])),
+                type_id=passive_mobs.type_id.at[START_LEVEL, mob_idx].set(
+                    jnp.where(should_spawn, snail_type_id, passive_mobs.type_id[START_LEVEL, mob_idx])),
+            )
 
     # Projectiles
     def _create_projectiles(max_num):

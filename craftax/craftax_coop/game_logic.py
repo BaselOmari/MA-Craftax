@@ -3506,7 +3506,17 @@ def trade_materials(state, action, params, static_params): # only trade with age
         ).sum()
         return new_material, new_trade, same_trade
     
-    # Food
+    # Block food/drink trades between foragers
+    giver_spec = state.player_specialization
+    receiver_spec = state.player_specialization[player_trading_to]
+    both_forager = jnp.logical_and(
+        giver_spec == Specialization.FORAGER.value,
+        receiver_spec == Specialization.FORAGER.value,
+    )
+    _is_giving_all = is_giving
+
+    # Food — blocked between foragers
+    is_giving = jnp.logical_and(_is_giving_all, jnp.logical_not(both_forager))
     food_trade_count = 0
     same_food = 0
     new_food, food_trade_count, same_food = _new_material_value(
@@ -3521,8 +3531,8 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_food_trade_count += food_trade_count
     new_trade_count += food_trade_count
     new_same_trade_count += same_food
-    
-    # Drink
+
+    # Drink — blocked between foragers (is_giving still excludes forager pairs)
     drink_trade_count = 0
     same_drink = 0
     new_drink, drink_trade_count, same_drink = _new_material_value(
@@ -3537,6 +3547,9 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_drink_trade_count += drink_trade_count
     new_trade_count += drink_trade_count
     new_same_trade_count += same_drink
+
+    # Restore is_giving for non-food/drink materials (forager restriction only applies to food/drink)
+    is_giving = _is_giving_all
 
     # Inventory Materials
     wood_trade_count = 0
