@@ -1337,7 +1337,9 @@ def single_run(config):
     env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
     num_teams = config.get("NUM_TEAMS", 2)
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
-    env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition)
+    disable_revive = config.get("DISABLE_REVIVE", False)
+    env_params_kwargs = {"disable_revive": disable_revive}
+    env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
 
     wandb.init(
         entity=config["ENTITY"],

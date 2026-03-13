@@ -23,7 +23,7 @@ from craftax_coop.world_gen.world_gen import generate_world
 
 
 class CraftaxCoopSymbolicEnv(MultiAgentEnv):
-    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2)):
+    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2), env_params_kwargs: dict = None):
         player_count = num_teams * len(team_composition)
         self.num_agents = player_count
         self.static_env_params = StaticEnvParams(
@@ -31,6 +31,7 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
             team_composition=team_composition,
             num_teams=num_teams,
         )
+        self._env_params = EnvParams(**(env_params_kwargs or {}))
 
         self.agents = [
             f"agent_{i}" for i in range(self.static_env_params.player_count)
@@ -92,7 +93,7 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
 
     @property
     def default_params(self) -> EnvParams:
-        return EnvParams()
+        return self._env_params
     
     @staticmethod
     def default_static_params() -> StaticEnvParams:

@@ -177,14 +177,15 @@ class EnvParams:
     reward_func: str = 'foraging'  # 'vanilla' or 'foraging'
     friendly_fire: bool = True
     allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
+    disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
 
     # Trading proximity (square/Chebyshev radius in tiles).
     # before: Default keeps the old FOV-box behavior for OBS_DIM=(9,11): row<=5, col<=6,
-    # approximated as a single square radius of 6.
-    trade_radius: int = 5
+    # approximated as a single square radius
+    trade_radius: int = 10
 
 
 @struct.dataclass

@@ -11,7 +11,7 @@ from flax import struct
 from seaborn import husl_palette
 
 # GAME CONSTANTS
-OBS_DIM = (9, 11)
+OBS_DIM = (17, 19)
 assert OBS_DIM[0] % 2 == 1 and OBS_DIM[1] % 2 == 1
 MAX_OBS_DIM = max(OBS_DIM)
 BLOCK_PIXEL_SIZE_HUMAN = 64
@@ -432,6 +432,15 @@ DIRECTIONS = jnp.concatenate(
     (
         jnp.array([[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0]], dtype=jnp.int32),
         jnp.zeros((11, 2), dtype=jnp.int32),
+    ),
+    axis=0,
+)
+
+# Passive mobs sample from a dedicated table with a heavy no-op bias.
+DIRECTIONS_PASSIVE = jnp.concatenate(
+    (
+        jnp.array([[0, 0], [0, -1], [0, 1], [-1, 0], [1, 0]], dtype=jnp.int32),
+        jnp.zeros((59, 2), dtype=jnp.int32),
     ),
     axis=0,
 )
@@ -1369,7 +1378,7 @@ def load_all_textures(block_pixel_size):
 def _is_texture_cache_stale(textures):
     expected_block_count = len(BlockType)
 
-    for texture_set in textures.values():
+    for pixel_size, texture_set in textures.items():
         if "block_textures" not in texture_set:
             return True
 
@@ -1383,6 +1392,14 @@ def _is_texture_cache_stale(textures):
             block_textures[BlockType.SNAIL_SPAWN.value],
         ):
             return True
+
+        # Detect OBS_DIM change: full_map_block_textures are tiled to (OBS_DIM * pixel_size).
+        if "full_map_block_textures" in texture_set:
+            fmt = np.array(texture_set["full_map_block_textures"])
+            expected_h = OBS_DIM[0] * pixel_size
+            expected_w = OBS_DIM[1] * pixel_size
+            if fmt.shape[1] != expected_h or fmt.shape[2] != expected_w:
+                return True
 
     return False
 

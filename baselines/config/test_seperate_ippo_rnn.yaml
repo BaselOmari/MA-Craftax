@@ -6,6 +6,7 @@ RUN_NAME: "Separate IPPO - Test POC"
 
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
+DISABLE_REVIVE: true
 
 NUM_TEAMS: 2
 TEAM_COMPOSITION: [1, 1, 2]  # [FORAGER, FORAGER, WARRIOR] # Specialization values: FORAGER=1, WARRIOR=2, MINER=3

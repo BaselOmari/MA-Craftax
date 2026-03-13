@@ -35,7 +35,10 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
 
     is_player_being_revived = jnp.logical_and(
         is_player_being_interacted_with_same_sc,
-        jnp.logical_not(state.player_alive),
+        jnp.logical_and(
+            jnp.logical_not(state.player_alive),
+            jnp.logical_not(env_params.disable_revive),
+        ),
     )
 
     attacker_damage = (
@@ -1609,12 +1612,12 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Random move
         rng, _rng = jax.random.split(rng)
         valid_random_moves = in_bounds(
-            DIRECTIONS[1:9] + passive_mobs.position[state.player_level, passive_mob_index], 
+            DIRECTIONS_PASSIVE + passive_mobs.position[state.player_level, passive_mob_index],
             static_params
         )
         random_move_direction = jax.random.choice(
             _rng,
-            DIRECTIONS[1:9],  # 50% chance of not moving
+            DIRECTIONS_PASSIVE,
             p=valid_random_moves
         )
         proposed_position = (
@@ -3522,7 +3525,9 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_food, food_trade_count, same_food = _new_material_value(
         Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count, same_food
     )
-    new_hunger = jnp.where(new_food>state.player_food, 0.0, state.player_hunger)
+    # No hunger reset on trade — food is added but hunger counter keeps ticking.
+    # This prevents the ping-pong exploit (passing 1 food back and forth to reset hunger).
+    new_hunger = state.player_hunger
     new_achievements = new_achievements.at[:, Achievement.COLLECT_FOOD.value].set(
         jnp.logical_or(
             new_achievements[:, Achievement.COLLECT_FOOD.value], new_food>state.player_food
@@ -3538,7 +3543,8 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_drink, drink_trade_count, same_drink = _new_material_value(
         Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count, same_drink
     )
-    new_thirst = jnp.where(new_drink>state.player_drink, 0.0, state.player_thirst)
+    # No thirst reset on trade — same rationale as hunger above.
+    new_thirst = state.player_thirst
     new_achievements = new_achievements.at[:, Achievement.COLLECT_DRINK.value].set(
         jnp.logical_or(
             new_achievements[:, Achievement.COLLECT_DRINK.value], new_drink>state.player_drink
