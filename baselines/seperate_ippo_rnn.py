@@ -281,9 +281,14 @@ def make_train(config, env):
         
         return optax.GradientTransformation(init_fn, update_fn)
 
+    # Determine action dimension (reduced = only actions 0..GIVE=24)
+    REDUCED_ACTION_DIM = 25  # Actions 0-24 (up to and including GIVE)
+    full_action_dim = env.action_space(env.agents[0]).n
+    action_dim = REDUCED_ACTION_DIM if config.get("USE_REDUCED_ACTION_SPACE", False) else full_action_dim
+
     def train(rng):
         # INIT NETWORK - separate params per agent
-        network = ActorCriticRNN(env.action_space(env.agents[0]).n, config=config)
+        network = ActorCriticRNN(action_dim, config=config)
         rng, _rng = jax.random.split(rng)
         
         init_x = (
