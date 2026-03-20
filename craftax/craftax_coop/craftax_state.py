@@ -202,7 +202,7 @@ class StaticEnvParams:
 
     # Mobs Per Player
     max_melee_mobs: int = 2
-    max_passive_mobs: int = 4
+    max_passive_mobs: int = 12
     max_growing_plants: int = 10
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 3

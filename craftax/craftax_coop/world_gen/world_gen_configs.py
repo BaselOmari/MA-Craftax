@@ -285,7 +285,7 @@ DUNGEON_CONFIG = DungeonConfig(
     rare_path_replacement_block=BlockType.PATH.value,
     valid_ladder=BlockType.PATH.value,
     fountain_probability=0.75,
-    snail_spawn_room_probability=0.5,
+    snail_spawn_room_probability=0.75,
 )
 
 SEWER_CONFIG = DungeonConfig(
@@ -294,7 +294,7 @@ SEWER_CONFIG = DungeonConfig(
     rare_path_replacement_block=BlockType.WATER.value,
     valid_ladder=BlockType.PATH.value,
     fountain_probability=0.5,
-    snail_spawn_room_probability=0.5,
+    snail_spawn_room_probability=0.75,
 )
 
 VAULTS_CONFIG = DungeonConfig(
@@ -303,7 +303,7 @@ VAULTS_CONFIG = DungeonConfig(
     rare_path_replacement_block=BlockType.PATH.value,
     valid_ladder=BlockType.PATH.value,
     fountain_probability=0.5,
-    snail_spawn_room_probability=0.5,
+    snail_spawn_room_probability=0.75,
 )
 
 ALL_DUNGEON_CONFIGS = jax.tree_util.tree_map(

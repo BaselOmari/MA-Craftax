@@ -122,7 +122,7 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
         num_health = 1
         num_alive = 1
         num_specialization = len(Specialization) - 1
-        num_req_mats = (Action.REQUEST_SAPPHIRE.value - Action.REQUEST_FOOD.value + 1)
+        num_req_mats = REQUEST_ACTIONS.shape[0]
         num_directions = 8
 
         return agents_per_team * (num_health + num_alive + num_specialization + num_req_mats) + self.static_env_params.player_count * num_directions

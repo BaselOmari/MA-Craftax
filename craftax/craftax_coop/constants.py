@@ -11,7 +11,7 @@ from flax import struct
 from seaborn import husl_palette
 
 # GAME CONSTANTS
-OBS_DIM = (17, 19)
+OBS_DIM = (9, 11)
 assert OBS_DIM[0] % 2 == 1 and OBS_DIM[1] % 2 == 1
 MAX_OBS_DIM = max(OBS_DIM)
 BLOCK_PIXEL_SIZE_HUMAN = 64
@@ -81,6 +81,7 @@ class ItemType(Enum):
 
 
 class Action(Enum):
+    #0-16 are the same actions from single agent craftax paper
     NOOP = 0  #
     LEFT = 1  # a
     RIGHT = 2  # d
@@ -98,42 +99,66 @@ class Action(Enum):
     MAKE_WOOD_SWORD = 14  # 5
     MAKE_STONE_SWORD = 15  # 6
     MAKE_IRON_SWORD = 16  # 7
-    REST = 17  # e
-    DESCEND = 18  # >
-    ASCEND = 19  # <
-    MAKE_DIAMOND_PICKAXE = 20  # 4
-    MAKE_DIAMOND_SWORD = 21  # 8
-    MAKE_IRON_ARMOUR = 22  # y
-    MAKE_DIAMOND_ARMOUR = 23  # u
-    SHOOT_ARROW = 24  # i
-    MAKE_ARROW = 25  # o
-    CAST_SPELL = 26  # g
-    PLACE_TORCH = 28  # j
-    DRINK_POTION_RED = 29  # z
-    DRINK_POTION_GREEN = 30  # x
-    DRINK_POTION_BLUE = 31  # c
-    DRINK_POTION_PINK = 32  # v
-    DRINK_POTION_CYAN = 33  # b
-    DRINK_POTION_YELLOW = 34  # n
-    READ_BOOK = 35  # m
-    ENCHANT_SWORD = 36  # k
-    ENCHANT_ARMOUR = 37  # l
-    MAKE_TORCH = 38  # [
-    LEVEL_UP_DEXTERITY = 39  # ]
-    LEVEL_UP_STRENGTH = 40  # -
-    LEVEL_UP_INTELLIGENCE = 41  # =
-    ENCHANT_BOW = 42  # ;
-    REQUEST_FOOD = 43  # Backspace
-    REQUEST_DRINK = 44  # Back slash
-    REQUEST_WOOD = 45  # Return
-    REQUEST_STONE = 46  # Right Shift
-    REQUEST_IRON = 47  # Up Arrow
-    REQUEST_COAL = 48  # Down Arrow
-    REQUEST_DIAMOND = 49  # Left Arrow
-    REQUEST_RUBY = 50  # Left Arrow
-    REQUEST_SAPPHIRE = 51  # Left Arrow
-    GIVE = 52  # Right Arrow
+
+    #trading mechanics
+    REQUEST_FOOD = 17  # Backspace
+    REQUEST_DRINK = 18  # Back slash
+    REQUEST_WOOD = 19  # Return
+    REQUEST_STONE = 20  # Right Shift
+    REQUEST_IRON = 21  # Up Arrow
+    REQUEST_COAL = 22  # Down Arrow
+    REQUEST_DIAMOND = 23  # Left Arrow
+    GIVE = 24  # Right Arrow
+    
+
+    #might be useful
+    PLACE_TORCH = 25  # j
+    MAKE_DIAMOND_PICKAXE = 26  # 4
+    MAKE_DIAMOND_SWORD = 27  # 8
+    MAKE_IRON_ARMOUR = 28  # y
+    MAKE_DIAMOND_ARMOUR = 29  # u
+    SHOOT_ARROW = 30  # i
+    MAKE_ARROW = 31  # o
+    MAKE_TORCH = 47  # [
+
+    #rest
+    REQUEST_RUBY = 32  # Left Arrow
+    REQUEST_SAPPHIRE = 33  # Left Arrow
+    REST = 34  # e
+    DESCEND = 35  # >
+    ASCEND = 36  # <
+    CAST_SPELL = 37  # g
+    DRINK_POTION_RED = 38  # z
+    DRINK_POTION_GREEN = 39  # x
+    DRINK_POTION_BLUE = 40  # c
+    DRINK_POTION_PINK = 41  # v
+    DRINK_POTION_CYAN = 42  # b
+    DRINK_POTION_YELLOW = 43  # n
+    READ_BOOK = 44  # m
+    ENCHANT_SWORD = 45  # k
+    ENCHANT_ARMOUR = 46  # l
+
+    LEVEL_UP_DEXTERITY = 48  # ]
+    LEVEL_UP_STRENGTH = 49  # -
+    LEVEL_UP_INTELLIGENCE = 50  # =
+    ENCHANT_BOW = 51  # ;
+
     # Player can give to all other players. (Action - GIVE) represents which player to give to.
+
+REQUEST_ACTIONS = jnp.array(
+    [
+        Action.REQUEST_FOOD.value,
+        Action.REQUEST_DRINK.value,
+        Action.REQUEST_WOOD.value,
+        Action.REQUEST_STONE.value,
+        Action.REQUEST_IRON.value,
+        Action.REQUEST_COAL.value,
+        Action.REQUEST_DIAMOND.value,
+        Action.REQUEST_RUBY.value,
+        Action.REQUEST_SAPPHIRE.value,
+    ],
+    dtype=jnp.int32,
+)
 
 def avail_actions_fn(num_agents):
     base_actions = [
@@ -154,42 +179,41 @@ def avail_actions_fn(num_agents):
         1,  # 14: MAKE_WOOD_SWORD ✅
         1,  # 15: MAKE_STONE_SWORD ✅
         0,  # 16: MAKE_IRON_SWORD ❌
-        1,  # 17: REST ✅
-        0,  # 18: DESCEND ❌ (disabled — single-level environment)
-        0,  # 19: ASCEND ❌ (disabled — single-level environment)
-        0,  # 20: MAKE_DIAMOND_PICKAXE ❌
-        0,  # 21: MAKE_DIAMOND_SWORD ❌
-        0,  # 22: MAKE_IRON_ARMOUR ❌
-        0,  # 23: MAKE_DIAMOND_ARMOUR ❌
-        1,  # 24: SHOOT_ARROW ✅
-        1,  # 25: MAKE_ARROW ✅
-        0,  # 26: CAST_SPELL ❌
-        # 27 is missing from enum
-        1,  # 28: PLACE_TORCH ✅
-        0,  # 29: DRINK_POTION_RED ❌
-        0,  # 30: DRINK_POTION_GREEN ❌
-        0,  # 31: DRINK_POTION_BLUE ❌
-        0,  # 32: DRINK_POTION_PINK ❌
-        0,  # 33: DRINK_POTION_CYAN ❌
-        0,  # 34: DRINK_POTION_YELLOW ❌
-        0,  # 35: READ_BOOK ❌
-        0,  # 36: ENCHANT_SWORD ❌
-        0,  # 37: ENCHANT_ARMOUR ❌
-        1,  # 38: MAKE_TORCH ✅
-        0,  # 39: LEVEL_UP_DEXTERITY ❌
-        0,  # 40: LEVEL_UP_STRENGTH ❌
-        0,  # 41: LEVEL_UP_INTELLIGENCE ❌
-        0,  # 42: ENCHANT_BOW ❌
-        1,  # 43: REQUEST_FOOD ✅
-        1,  # 44: REQUEST_DRINK ✅
-        1,  # 45: REQUEST_WOOD ✅
-        0,  # 46: REQUEST_STONE ❌
-        0,  # 47: REQUEST_IRON ❌
-        0,  # 48: REQUEST_COAL ❌
-        0,  # 49: REQUEST_DIAMOND ❌
-        0,  # 50: REQUEST_RUBY ❌
-        0,  # 51: REQUEST_SAPPHIRE ❌
-        1,  # 52: GIVE ✅
+        1,  # 17: REQUEST_FOOD ✅
+        1,  # 18: REQUEST_DRINK ✅
+        1,  # 19: REQUEST_WOOD ✅
+        0,  # 20: REQUEST_STONE ❌
+        0,  # 21: REQUEST_IRON ❌
+        0,  # 22: REQUEST_COAL ❌
+        0,  # 23: REQUEST_DIAMOND ❌
+        1,  # 24: GIVE ✅
+        1,  # 25: PLACE_TORCH ✅
+        0,  # 26: MAKE_DIAMOND_PICKAXE ❌
+        0,  # 27: MAKE_DIAMOND_SWORD ❌
+        0,  # 28: MAKE_IRON_ARMOUR ❌
+        0,  # 29: MAKE_DIAMOND_ARMOUR ❌
+        1,  # 30: SHOOT_ARROW ✅
+        1,  # 31: MAKE_ARROW ✅
+        0,  # 32: REQUEST_RUBY ❌
+        0,  # 33: REQUEST_SAPPHIRE ❌
+        1,  # 34: REST ✅
+        0,  # 35: DESCEND ❌ (disabled — single-level environment)
+        0,  # 36: ASCEND ❌ (disabled — single-level environment)
+        0,  # 37: CAST_SPELL ❌
+        0,  # 38: DRINK_POTION_RED ❌
+        0,  # 39: DRINK_POTION_GREEN ❌
+        0,  # 40: DRINK_POTION_BLUE ❌
+        0,  # 41: DRINK_POTION_PINK ❌
+        0,  # 42: DRINK_POTION_CYAN ❌
+        0,  # 43: DRINK_POTION_YELLOW ❌
+        0,  # 44: READ_BOOK ❌
+        0,  # 45: ENCHANT_SWORD ❌
+        0,  # 46: ENCHANT_ARMOUR ❌
+        1,  # 47: MAKE_TORCH ✅
+        0,  # 48: LEVEL_UP_DEXTERITY ❌
+        0,  # 49: LEVEL_UP_STRENGTH ❌
+        0,  # 50: LEVEL_UP_INTELLIGENCE ❌
+        0,  # 51: ENCHANT_BOW ❌
     ]
 
     # Add GIVE_TO_PLAYER_X for other agents (all disabled)
@@ -249,7 +273,7 @@ FLOOR_MOB_SPAWN_CHANCE = jnp.array(
         # (passive, melee, ranged, melee-night)
         jnp.array([0.1, 0.02, 0.05, 0.1]),  # Floor 0 (overworld)
         jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 1 (gnomish mines)
-        jnp.array([0.0175, 0.0145, 0.0125, 0.0]), # Floor 2 (dungeon)
+        jnp.array([1/6, 0.0145, 0.0125, 0.0]), # Floor 2 (dungeon)  # passive=1/6 so that *6 agents = 100%
         jnp.array([0.1, 0.06, 0.05, 0.0]),   # Floor 3 (sewers)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 4 (vaults)
         jnp.array([0.1, 0.06, 0.05, 0.0]),  # Floor 5 (troll mines)
@@ -367,7 +391,7 @@ MOB_TYPE_HEALTH_MAPPING = jnp.array(
         # (passive, melee, ranged, -)
         jnp.array([3, 5, 3, 0]),  # Floor 0 (overworld)
         jnp.array([4, 7, 5, 0]),  # Floor 1 (gnomish mines)
-        jnp.array([3, 4.5, 3, 0]),  # Floor 2 (dungeon)
+        jnp.array([2, 4.5, 3, 0]),  # Floor 2 (dungeon)
         jnp.array([8, 11, 8, 0]),  # Floor 3 (sewers)
         jnp.array([0, 12, 12, 0]),  # Floor 4 (vaults)
         jnp.array([0, 20, 4, 0]),  # Floor 5 (troll mines)

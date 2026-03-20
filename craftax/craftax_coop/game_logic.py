@@ -2595,6 +2595,27 @@ def spawn_mobs(state, rng, params, static_params):
         passive_mobs_can_spawn_map, jnp.logical_not(state.mob_map[state.player_level])
     )
 
+    # Prevent spawning inside any agent's field of view
+    half_h = OBS_DIM[0] // 2
+    half_w = OBS_DIM[1] // 2
+    rows = jnp.arange(static_params.map_size[0])
+    cols = jnp.arange(static_params.map_size[1])
+
+    def _player_fov_mask(player_idx):
+        pr = state.player_position[player_idx, 0]
+        pc = state.player_position[player_idx, 1]
+        in_rows = (rows >= pr - half_h) & (rows <= pr + half_h)
+        in_cols = (cols >= pc - half_w) & (cols <= pc + half_w)
+        fov = in_rows[:, None] & in_cols[None, :]
+        # Only mask FOV for alive players
+        return fov & state.player_alive[player_idx]
+
+    all_fov = jax.vmap(_player_fov_mask)(jnp.arange(static_params.player_count))
+    any_player_fov = all_fov.any(axis=0)
+    passive_mobs_can_spawn_map = jnp.logical_and(
+        passive_mobs_can_spawn_map, jnp.logical_not(any_player_fov)
+    )
+
     # To avoid spawning mobs ontop of dead players
     passive_mobs_can_spawn_map = passive_mobs_can_spawn_map.at[
         state.player_position[:, 0], state.player_position[:, 1]
@@ -3455,8 +3476,25 @@ def trade_materials(state, action, params, static_params): # only trade with age
 
     in_same_sc = (jnp.expand_dims(state.player_sc, axis=1) == jnp.expand_dims(state.player_sc, axis=0)).T
 
-    player_trading_to = action - Action.GIVE.value
-    player_trading_to += 1 * (player_trading_to >= jnp.arange(static_params.player_count))
+    # Base GIVE is a normal enum action, while additional GIVE-to-target actions
+    # are appended after len(Action) in the action space.
+    extra_give_start = len(Action)
+    extra_give_end = extra_give_start + static_params.player_count - 2
+    is_base_give = action == Action.GIVE.value
+    is_extra_give = jnp.logical_and(action >= extra_give_start, action < extra_give_end)
+    is_give_action = jnp.logical_or(is_base_give, is_extra_give)
+
+    give_slot = jnp.where(
+        is_base_give,
+        0,
+        action - extra_give_start + 1,
+    )
+    resolved_target = give_slot + 1 * (give_slot >= jnp.arange(static_params.player_count))
+    player_trading_to = jnp.where(
+        is_give_action,
+        resolved_target,
+        jnp.arange(static_params.player_count),
+    )
 
     # Trading proximity check using a configurable square radius.
     giver_pos = state.player_position  # (player_count, 2) int32
@@ -3468,10 +3506,7 @@ def trade_materials(state, action, params, static_params): # only trade with age
     )
 
     is_giving = jnp.logical_and(
-        jnp.logical_and(
-            action >= Action.GIVE.value, 
-            action < (Action.GIVE.value + static_params.player_count - 1)
-        ),
+        is_give_action,
         jnp.logical_and(
             in_same_sc[jnp.arange(static_params.player_count), player_trading_to],
             within_radius
@@ -3617,9 +3652,7 @@ def make_request(state, action):
     )
 
     # Initialize New Request
-    is_making_request = jnp.logical_and( # Hacky
-        action >= Action.REQUEST_FOOD.value, action <= Action.REQUEST_DIAMOND.value
-    )
+    is_making_request = (action[:, None] == REQUEST_ACTIONS[None, :]).any(axis=1)
     new_request_type = jnp.where(
         is_making_request,
         action,

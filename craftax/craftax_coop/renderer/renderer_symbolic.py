@@ -266,12 +266,13 @@ def render_craftax_symbolic(state: EnvState, static_params: StaticEnvParams):
     players_health = state.player_health / 10.0
     players_alive = state.player_alive
     players_specialization = jax.nn.one_hot(state.player_specialization - Specialization.FORAGER.value, num_classes=3)
+    request_matches = state.request_type[:, None] == REQUEST_ACTIONS[None, :]
+    request_index = jnp.argmax(request_matches, axis=1)
+    has_valid_request_type = request_matches.any(axis=1)
     requested_material = (
-        jax.nn.one_hot(
-            state.request_type - Action.REQUEST_FOOD.value,
-            num_classes=(Action.REQUEST_SAPPHIRE.value - Action.REQUEST_FOOD.value + 1)
-        )
+        jax.nn.one_hot(request_index, num_classes=REQUEST_ACTIONS.shape[0])
         * (state.request_duration > 0)[:, None]
+        * has_valid_request_type[:, None]
     )
     player_data = jnp.concatenate(
         (players_health[:, None], players_alive[:, None], players_specialization, requested_material),

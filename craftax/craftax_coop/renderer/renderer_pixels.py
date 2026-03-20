@@ -1022,9 +1022,12 @@ def render_craftax_pixels(state, block_pixel_size, static_params, player_specifi
 
         # Render Teammate Messages
         message_icon_locations = player_icon_locations + jnp.array([0, 4])
-        message_texture_index = state.request_type - Action.REQUEST_FOOD.value # Hacky
+        request_matches = state.request_type[:, None] == REQUEST_ACTIONS[None, :]
+        message_texture_index = jnp.argmax(request_matches, axis=1)
+        has_valid_request_type = request_matches.any(axis=1)
+        show_request_icon = jnp.logical_and(state.request_duration > 0, has_valid_request_type)
         message_texture = jnp.where(
-            state.request_duration[:, None, None, None] > 0,
+            show_request_icon[:, None, None, None],
             textures["request_message_textures"][message_texture_index][:, :, :, :3],
             textures["smaller_empty_texture"][None, :],
         ).astype(float)
