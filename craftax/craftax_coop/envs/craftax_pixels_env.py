@@ -90,10 +90,11 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_avail_actions(self, state: EnvState) -> Dict[str, chex.Array]:
-        aa = jnp.full(len(Action), True)
+        del state
+        aa = jnp.ones((self.action_shape().n,), dtype=bool)
         return {
-            agent: aa[i]
-            for i, agent in enumerate(self.agents)
+            agent: aa
+            for agent in self.agents
         }
 
     @property
@@ -105,7 +106,9 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
         return StaticEnvParams()
 
     def action_shape(self) -> spaces.Discrete:
-        return spaces.Discrete(len(Action) + (self.static_env_params.player_count - 2))
+        return spaces.Discrete(
+            team_action_space_size(len(self.static_env_params.team_composition))
+        )
 
     def observation_shape(self) -> spaces.Box:
         map_height = OBS_DIM[0]

@@ -10,7 +10,7 @@ DISABLE_REVIVE: true
 
 NUM_TEAMS: 2
 TEAM_COMPOSITION: [1, 1, 2]  # [FORAGER, FORAGER, WARRIOR] # Specialization values: FORAGER=1, WARRIOR=2, MINER=3
-USE_REDUCED_ACTION_SPACE: true  # If true, only actions 0-24 (up to GIVE) are available
+USE_REDUCED_ACTION_SPACE: true  # If true, use actions 0-24 plus team-local GIVE target actions
 
 # Model parameters
 ALG_NAME: "ippo-rnn"

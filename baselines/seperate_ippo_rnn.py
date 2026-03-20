@@ -37,6 +37,7 @@ import imageio
 
 from jaxmarl.wrappers.baselines import LogWrapper
 from craftax.craftax_env import make_craftax_env_from_name
+from craftax.craftax_coop.constants import reduced_action_ids
 from craftax.environment_base.wrappers import VideoPlotWrapper
 from craftax.custom_rendering.base_rendering import load_rendering_resources
 from craftax.custom_rendering.ego_rendering import render_ego_perspective
@@ -281,10 +282,18 @@ def make_train(config, env):
         
         return optax.GradientTransformation(init_fn, update_fn)
 
-    # Determine action dimension (reduced = only actions 0..GIVE=24)
-    REDUCED_ACTION_DIM = 25  # Actions 0-24 (up to and including GIVE)
+    use_reduced_action_space = config.get("USE_REDUCED_ACTION_SPACE", False)
+    agents_per_team = len(config.get("TEAM_COMPOSITION", [1, 1, 2]))
+    reduced_action_id_map = reduced_action_ids(agents_per_team)
+    # Reduced mode keeps actions 0..GIVE and appends the team-local GIVE targets.
+    REDUCED_ACTION_DIM = int(reduced_action_id_map.shape[0])
     full_action_dim = env.action_space(env.agents[0]).n
-    action_dim = REDUCED_ACTION_DIM if config.get("USE_REDUCED_ACTION_SPACE", False) else full_action_dim
+    action_dim = REDUCED_ACTION_DIM if use_reduced_action_space else full_action_dim
+
+    def policy_action_to_env_action(action):
+        if use_reduced_action_space:
+            return reduced_action_id_map[action]
+        return action
 
     def train(rng):
         # INIT NETWORK - separate params per agent
@@ -381,7 +390,8 @@ def make_train(config, env):
             log_prob = log_prob.squeeze(axis=1)  # (num_agents, num_envs)
             value = value.squeeze(axis=1)        # (num_agents, num_envs)
 
-            env_act = unbatchify(action, env.agents)
+            env_action = policy_action_to_env_action(action)
+            env_act = unbatchify(env_action, env.agents)
             env_act = {k: v.squeeze() for k, v in env_act.items()}
 
             # STEP ENV
@@ -435,7 +445,7 @@ def make_train(config, env):
 
             # Extra per-step fields for CSV logging — only computed in logging iterations
             if detailed_logging:
-                info['action'] = action           # (num_agents, num_envs)
+                info['action'] = env_action       # (num_agents, num_envs)
                 info['done'] = done_batch         # (num_agents, num_envs)
                 info['value'] = value             # (num_agents, num_envs)
                 info['hidden_state'] = hstate     # (num_agents, num_envs, hidden_dim)
@@ -1149,7 +1159,8 @@ def make_train(config, env):
             action = action.squeeze(axis=1)  # (num_agents, 1)
 
             # Note: no extra squeeze on env_act values — keeps the (1,) batch dim for vmap
-            env_act = unbatchify(action, env.agents)  # {agent: (1,)}
+            env_action = policy_action_to_env_action(action)
+            env_act = unbatchify(env_action, env.agents)  # {agent: (1,)}
 
             # STEP 1 env (use env_train — video doesn't need CSV fields)
             rng, _rng = jax.random.split(rng)

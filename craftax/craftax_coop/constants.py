@@ -143,7 +143,8 @@ class Action(Enum):
     LEVEL_UP_INTELLIGENCE = 50  # =
     ENCHANT_BOW = 51  # ;
 
-    # Player can give to all other players. (Action - GIVE) represents which player to give to.
+    # Player can give to teammates only. Additional GIVE-to-teammate actions are
+    # appended after len(Action) in the action space.
 
 REQUEST_ACTIONS = jnp.array(
     [
@@ -160,7 +161,35 @@ REQUEST_ACTIONS = jnp.array(
     dtype=jnp.int32,
 )
 
-def avail_actions_fn(num_agents):
+def team_give_action_count(agents_per_team: int) -> int:
+    return max(0, agents_per_team - 1)
+
+
+def extra_team_give_action_count(agents_per_team: int) -> int:
+    return max(0, team_give_action_count(agents_per_team) - 1)
+
+
+def team_action_space_size(agents_per_team: int) -> int:
+    return len(Action) + extra_team_give_action_count(agents_per_team)
+
+
+def reduced_action_ids(agents_per_team: int):
+    base_action_ids = list(range(Action.GIVE.value + 1))
+    extra_give_start = len(Action)
+    extra_give_action_ids = list(
+        range(
+            extra_give_start,
+            extra_give_start + extra_team_give_action_count(agents_per_team),
+        )
+    )
+    return jnp.array(base_action_ids + extra_give_action_ids, dtype=jnp.int32)
+
+
+# thisi us currently not in use:
+def avail_actions_fn(num_agents, agents_per_team=None):
+    if agents_per_team is None:
+        agents_per_team = num_agents
+
     base_actions = [
         1,  # 0: NOOP ✅
         1,  # 1: LEFT ✅
@@ -186,7 +215,7 @@ def avail_actions_fn(num_agents):
         0,  # 21: REQUEST_IRON ❌
         0,  # 22: REQUEST_COAL ❌
         0,  # 23: REQUEST_DIAMOND ❌
-        1,  # 24: GIVE ✅
+        1,  # 24: GIVE ✅ (masked off below if the team has no trade partner)
         1,  # 25: PLACE_TORCH ✅
         0,  # 26: MAKE_DIAMOND_PICKAXE ❌
         0,  # 27: MAKE_DIAMOND_SWORD ❌
@@ -216,8 +245,10 @@ def avail_actions_fn(num_agents):
         0,  # 51: ENCHANT_BOW ❌
     ]
 
-    # Add GIVE_TO_PLAYER_X for other agents (all disabled)
-    extra_give_actions = [0] * (num_agents - 1)
+    base_actions[Action.GIVE.value] = int(team_give_action_count(agents_per_team) > 0)
+
+    # Add GIVE_TO_TEAMMATE_X for the remaining teammates in the same team.
+    extra_give_actions = [1] * extra_team_give_action_count(agents_per_team)
 
     return jnp.array(base_actions + extra_give_actions, dtype=int)
 

@@ -84,10 +84,11 @@ class CraftaxMAPixelsEnv(MultiAgentEnv):
 
     @partial(jax.jit, static_argnums=(0,))
     def get_avail_actions(self, state: EnvState) -> Dict[str, chex.Array]:
-        aa = jnp.full(len(Action), True)
+        del state
+        aa = jnp.ones((self.action_shape().n,), dtype=bool)
         return {
-            agent: aa[i]
-            for i, agent in enumerate(self.agents)
+            agent: aa
+            for agent in self.agents
         }
 
     @property

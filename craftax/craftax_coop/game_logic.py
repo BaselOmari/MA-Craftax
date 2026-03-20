@@ -3466,7 +3466,7 @@ def calculate_inventory_achievements(state):
     return state.replace(achievements=achievements)
 
 
-def trade_materials(state, action, params, static_params): # only trade with agents in the same subclass and within trading radius
+def trade_materials(state, action, params, static_params): # only trade with teammates and within trading radius
     new_achievements = state.achievements
     new_trade_count = state.trade_count
     new_food_trade_count = state.food_trade_count
@@ -3474,13 +3474,17 @@ def trade_materials(state, action, params, static_params): # only trade with age
     new_wood_trade_count = state.wood_trade_count
     new_same_trade_count = state.same_trade_count
 
+    agent_indices = jnp.arange(static_params.player_count)
+    agents_per_team = len(static_params.team_composition)
     in_same_sc = (jnp.expand_dims(state.player_sc, axis=1) == jnp.expand_dims(state.player_sc, axis=0)).T
 
-    # Base GIVE is a normal enum action, while additional GIVE-to-target actions
-    # are appended after len(Action) in the action space.
+    # Base GIVE plus extra GIVE actions address teammates only.
     extra_give_start = len(Action)
-    extra_give_end = extra_give_start + static_params.player_count - 2
-    is_base_give = action == Action.GIVE.value
+    extra_give_end = extra_give_start + extra_team_give_action_count(agents_per_team)
+    is_base_give = jnp.logical_and(
+        action == Action.GIVE.value,
+        team_give_action_count(agents_per_team) > 0,
+    )
     is_extra_give = jnp.logical_and(action >= extra_give_start, action < extra_give_end)
     is_give_action = jnp.logical_or(is_base_give, is_extra_give)
 
@@ -3489,11 +3493,14 @@ def trade_materials(state, action, params, static_params): # only trade with age
         0,
         action - extra_give_start + 1,
     )
-    resolved_target = give_slot + 1 * (give_slot >= jnp.arange(static_params.player_count))
+    team_start = (agent_indices // agents_per_team) * agents_per_team
+    self_team_slot = agent_indices % agents_per_team
+    resolved_team_slot = give_slot + 1 * (give_slot >= self_team_slot)
+    resolved_target = team_start + resolved_team_slot
     player_trading_to = jnp.where(
         is_give_action,
         resolved_target,
-        jnp.arange(static_params.player_count),
+        agent_indices,
     )
 
     # Trading proximity check using a configurable square radius.
@@ -3508,7 +3515,7 @@ def trade_materials(state, action, params, static_params): # only trade with age
     is_giving = jnp.logical_and(
         is_give_action,
         jnp.logical_and(
-            in_same_sc[jnp.arange(static_params.player_count), player_trading_to],
+            in_same_sc[agent_indices, player_trading_to],
             within_radius
         )
     )
