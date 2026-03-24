@@ -182,6 +182,7 @@ class EnvParams:
     terminate_on_any_death: bool = False  # If True, any single agent death ends the whole episode immediately.
     reviving_cooldown_steps: int = 0  # Steps a revived agent must wait before they can be revived again.
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
+    dead_self_penalty_weight: float = 0.0  # Per-agent penalty applied only to dead agents after shared reward aggregation.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15

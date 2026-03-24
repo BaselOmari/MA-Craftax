@@ -1363,11 +1363,13 @@ def single_run(config):
     terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
     reviving_cooldown_steps = config.get("REVIVING_COOLDOWN_STEPS", 0)
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
+    dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
     env_params_kwargs = {
         "disable_revive": disable_revive,
         "terminate_on_any_death": terminate_on_any_death,
         "reviving_cooldown_steps": reviving_cooldown_steps,
         "all_team_alive_bonus": all_team_alive_bonus,
+        "dead_self_penalty_weight": dead_self_penalty_weight,
     }
     env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
 

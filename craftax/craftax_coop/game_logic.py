@@ -3860,6 +3860,10 @@ def craftax_step(
     # Add a small team-level shaping bonus only after reward sharing, so it stays a true shared objective.
     team_all_alive = jnp.where(team_mask, player_alive[None, :], True).all(axis=1)
     shared_reward = shared_reward + params.all_team_alive_bonus * team_all_alive.astype(shared_reward.dtype)
+
+    # Apply a self-only penalty to dead agents after reward sharing so it does not punish teammates.
+    dead_self_penalty = params.dead_self_penalty_weight * jnp.logical_not(player_alive).astype(shared_reward.dtype)
+    shared_reward = shared_reward - dead_self_penalty
     
     # Old behavior (global sharing across all agents):
     # shared_reward = individual_reward.sum().repeat(static_params.player_count)
