@@ -22,7 +22,7 @@ from craftax_coop.util.game_logic_utils import has_beaten_boss
 from craftax_coop.world_gen.world_gen import generate_world
 
 class CraftaxCoopPixelsEnv(MultiAgentEnv):
-    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2)):
+    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2), env_params_kwargs: dict = None):
         player_count = num_teams * len(team_composition)
         self.num_agents = player_count
         self.static_env_params = StaticEnvParams(
@@ -30,6 +30,7 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
             team_composition=team_composition,
             num_teams=num_teams,
         )
+        self._env_params = EnvParams(**(env_params_kwargs or {}))
         self.pixel_size = BLOCK_PIXEL_SIZE_AGENT
 
         self.agents = [
@@ -99,7 +100,7 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
 
     @property
     def default_params(self) -> EnvParams:
-        return EnvParams()
+        return self._env_params
 
     @staticmethod
     def default_static_params() -> StaticEnvParams:
@@ -127,9 +128,11 @@ class CraftaxCoopPixelsEnv(MultiAgentEnv):
 
     def is_terminal(self, state: EnvState, params: EnvParams) -> bool:
         done_steps = state.timestep >= params.max_timesteps
-        is_dead = jnp.logical_not(state.player_alive).all()
+        any_dead = jnp.logical_not(state.player_alive).any()
+        all_dead = jnp.logical_not(state.player_alive).all()
+        death_terminal = jax.lax.select(params.terminate_on_any_death, any_dead, all_dead)
         defeated_boss = has_beaten_boss(state, self.static_env_params)
-        is_terminal = jnp.logical_or(is_dead, done_steps)
+        is_terminal = jnp.logical_or(death_terminal, done_steps)
         is_terminal = jnp.logical_or(is_terminal, defeated_boss)
         return is_terminal
 

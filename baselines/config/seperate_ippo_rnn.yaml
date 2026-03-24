@@ -3,10 +3,14 @@ WANDB_MODE: "online" # Change to "online" for logging and include appropriate EN
 ENTITY: ""
 PROJECT: ""
 RUN_NAME: "IPPO - new_log"
+OUTPUT_DIR: "output_test"  # Example: "run_xy" Optional local artifact directory. Empty => use ./<wandb_run_id>
 
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
 DISABLE_REVIVE: true
+TERMINATE_ON_ANY_DEATH: true
+REVIVING_COOLDOWN_STEPS: 100
+ALL_TEAM_ALIVE_BONUS: 0.00
 
 NUM_TEAMS: 2
 TEAM_COMPOSITION: [1, 1, 2]  # [FORAGER, FORAGER, WARRIOR] # Specialization values: FORAGER=1, WARRIOR=2, MINER=3

@@ -200,6 +200,12 @@ def make_train(config, env):
     )
     _video_max_length = int(config.get("MAX_VIDEO_LENGTH", -1))
 
+    def get_run_output_dir():
+        configured_output_dir = config.get("OUTPUT_DIR", "")
+        if configured_output_dir:
+            return configured_output_dir
+        return os.path.join("./", wandb.run.id)
+
     # Two env references to avoid VideoPlotWrapper overhead during training:
     # env_train: LogWrapper only — used for training steps (no mob distance calculations)
     # env_log:   LogWrapper + VideoPlotWrapper — used for CSV logging steps (adds health, food, mob distances etc.)
@@ -1024,7 +1030,7 @@ def make_train(config, env):
                                       'has_pick', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
                                         ]
 
-                run_out_path = os.path.join('./', wandb.run.id)
+                run_out_path = get_run_output_dir()
                 os.makedirs(run_out_path, exist_ok=True)
                 # Assemble header for the scalar file(s)
                 scalar_file_header = 'action'
@@ -1250,7 +1256,7 @@ def make_train(config, env):
                     if not _video_frame_buffer['ego']:
                         print(f'Warning: No video frames collected at step {step_int}, skipping video save.')
                         return
-                    run_out_path = os.path.join('./', wandb.run.id, 'videos')
+                    run_out_path = os.path.join(get_run_output_dir(), 'videos')
                     os.makedirs(run_out_path, exist_ok=True)
 
                     ego_frames = np.stack(_video_frame_buffer['ego'])    # (T, num_agents, H, W, 3) uint8
@@ -1290,7 +1296,7 @@ def make_train(config, env):
             # Log model weights
             def save_weights_callback(weights, iter):
                 weights_flat = jax.tree.flatten(weights)
-                run_out_path = os.path.join('./', wandb.run.id)
+                run_out_path = get_run_output_dir()
                 os.makedirs(run_out_path, exist_ok=True)
                 weight_filename = os.path.join(run_out_path, 'weights_{}.csv'.format(iter))
                 weight_file = open(weight_filename, 'w')
@@ -1354,7 +1360,15 @@ def single_run(config):
     num_teams = config.get("NUM_TEAMS", 2)
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
     disable_revive = config.get("DISABLE_REVIVE", False)
-    env_params_kwargs = {"disable_revive": disable_revive}
+    terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
+    reviving_cooldown_steps = config.get("REVIVING_COOLDOWN_STEPS", 0)
+    all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
+    env_params_kwargs = {
+        "disable_revive": disable_revive,
+        "terminate_on_any_death": terminate_on_any_death,
+        "reviving_cooldown_steps": reviving_cooldown_steps,
+        "all_team_alive_bonus": all_team_alive_bonus,
+    }
     env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
 
     wandb.init(

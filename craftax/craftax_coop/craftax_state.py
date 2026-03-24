@@ -128,6 +128,7 @@ class EnvState:
     wood_trade_count: int
     same_trade_count: int
     revives: int
+    revive_cooldown_until: jnp.ndarray  # (player_count,) earliest timestep when each agent can be revived again
     ff_damage_dealt: float
     team_kills: jnp.ndarray  # (num_teams,) array: kills against other teams, indexed by killer's team
     walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
@@ -178,6 +179,9 @@ class EnvParams:
     friendly_fire: bool = True
     allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
     disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
+    terminate_on_any_death: bool = False  # If True, any single agent death ends the whole episode immediately.
+    reviving_cooldown_steps: int = 0  # Steps a revived agent must wait before they can be revived again.
+    all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15

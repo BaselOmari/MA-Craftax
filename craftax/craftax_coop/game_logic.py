@@ -33,11 +33,15 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         axis=-1
     )
 
+    revive_cooldown_ready = state.timestep >= state.revive_cooldown_until
     is_player_being_revived = jnp.logical_and(
         is_player_being_interacted_with_same_sc,
         jnp.logical_and(
             jnp.logical_not(state.player_alive),
-            jnp.logical_not(env_params.disable_revive),
+            jnp.logical_and(
+                jnp.logical_not(env_params.disable_revive),
+                revive_cooldown_ready,
+            ),
         ),
     )
 
@@ -92,9 +96,17 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     attacker_teams = state.player_sc  # (player_count,)
     new_damage_dealt_to_other_team = state.damage_dealt_to_other_team.at[attacker_teams].add(attacker_damage)
 
+    next_revive_available_timestep = state.timestep + env_params.reviving_cooldown_steps + 1
+    new_revive_cooldown_until = jnp.where(
+        is_player_being_revived,
+        next_revive_available_timestep,
+        state.revive_cooldown_until,
+    )
+
     state = state.replace(
         player_health=new_player_health,
         revives=state.revives+is_player_being_revived.sum(),
+        revive_cooldown_until=new_revive_cooldown_until,
         ff_damage_dealt=state.ff_damage_dealt+damage_taken.sum(),
         team_kills=new_team_kills,
         damage_taken_total=state.damage_taken_total + damage_taken,
@@ -3832,6 +3844,8 @@ def craftax_step(
         individual_vanilla_reward
     )
 
+    player_alive = state.player_health > 0.0
+
     # Share reward only within the same team (subclass)
     # Team A (subclass 0): agents 0, 2, 4, ...
     # Team B (subclass 1): agents 1, 3, 5, ...
@@ -3842,6 +3856,10 @@ def craftax_step(
         0.0
     )
     shared_reward = team_rewards.sum(axis=1)  # Sum rewards within each agent's team
+
+    # Add a small team-level shaping bonus only after reward sharing, so it stays a true shared objective.
+    team_all_alive = jnp.where(team_mask, player_alive[None, :], True).all(axis=1)
+    shared_reward = shared_reward + params.all_team_alive_bonus * team_all_alive.astype(shared_reward.dtype)
     
     # Old behavior (global sharing across all agents):
     # shared_reward = individual_reward.sum().repeat(static_params.player_count)
@@ -3851,8 +3869,6 @@ def craftax_step(
         shared_reward,
         individual_reward
     )
-
-    player_alive = state.player_health > 0.0
 
     # Track per-agent steps alive
     new_steps_alive = state.steps_alive + player_alive.astype(jnp.float32)

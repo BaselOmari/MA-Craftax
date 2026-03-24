@@ -24,7 +24,7 @@ def make_craftax_env_from_name(name: str, num_teams: int = 2, team_composition: 
         return CraftaxCoopSymbolicEnv(num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
     elif name == "Craftax-Coop-Pixels":
         _validate_team_config(num_teams, team_composition)
-        return CraftaxCoopPixelsEnv(num_teams=num_teams, team_composition=team_composition)
+        return CraftaxCoopPixelsEnv(num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
     elif name == "Craftax-MA-Symbolic":
         return CraftaxMASymbolicEnv()
     elif name == "Craftax-MA-Pixels":

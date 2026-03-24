@@ -945,6 +945,7 @@ def generate_world(rng, params, static_params):
         wood_trade_count=jnp.asarray(0, dtype=jnp.int32),
         same_trade_count=jnp.asarray(0, dtype=jnp.int32),
         revives=jnp.asarray(0, dtype=jnp.int32),
+        revive_cooldown_until=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         ff_damage_dealt=jnp.asarray(0.0, dtype=jnp.float32),
         team_kills=jnp.zeros(static_params.num_teams, dtype=jnp.int32),
         walking_distance=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
