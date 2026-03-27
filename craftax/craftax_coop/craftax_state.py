@@ -153,6 +153,10 @@ class EnvState:
     # Misc Metrics
     all_necessities_frac: jnp.ndarray
 
+    # Episode length cap (dynamically set by training loop).
+    # Keep this float32 so reset/step states stay dtype-consistent under JAX auto-reset.
+    effective_max_timesteps: float = 100000.0
+
     fractal_noise_angles: tuple[int, int, int, int] = (None, None, None, None)
 
 
@@ -181,6 +185,7 @@ class EnvParams:
     disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
     terminate_on_any_death: bool = False  # If True, any single agent death ends the whole episode immediately.
     reviving_cooldown_steps: int = 0  # Steps a revived agent must wait before they can be revived again.
+    teammate_alive_bonus: float = 0.0  # Shared bonus per additional alive team member beyond the first alive member.
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
     dead_self_penalty_weight: float = 0.0  # Per-agent penalty applied only to dead agents after shared reward aggregation.
 
@@ -205,13 +210,13 @@ class StaticEnvParams:
     team_composition: tuple = (1, 1, 2)
     num_teams: int = 2
 
-    # Mobs Per Player
-    max_melee_mobs: int = 2
-    max_passive_mobs: int = 12
-    max_growing_plants: int = 10
+    # Global mob / projectile / plant caps (no longer scaled by player_count)
+    max_melee_mobs: int = 24
+    max_passive_mobs: int = 72
+    max_growing_plants: int = 60
     max_ranged_mobs: int = 0
-    max_mob_projectiles: int = 3
-    max_player_projectiles: int = 3
+    max_mob_projectiles: int = 18
+    max_player_projectiles: int = 18
 
     # Rate at which player hunger increases per tick (multiplied with base rate)
     hunger_increase_rate: float = 1.0

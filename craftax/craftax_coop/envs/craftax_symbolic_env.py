@@ -156,7 +156,7 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
         )
     
     def is_terminal(self, state: EnvState, params: EnvParams) -> bool:
-        done_steps = state.timestep >= params.max_timesteps
+        done_steps = state.timestep.astype(state.effective_max_timesteps.dtype) >= state.effective_max_timesteps
         any_dead = jnp.logical_not(state.player_alive).any()
         all_dead = jnp.logical_not(state.player_alive).all()
         death_terminal = jax.lax.select(params.terminate_on_any_death, any_dead, all_dead)

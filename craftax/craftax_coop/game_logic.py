@@ -34,16 +34,43 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     )
 
     revive_cooldown_ready = state.timestep >= state.revive_cooldown_until
+
+    # Identify the reviver for each potential target.
+    # same_player_interacting_with[i] = target that agent i is interacting with.
+    # For each target j, the reviver is the agent i that targets j.
+    # reviver_of[j] = i  (the agent attempting to revive j)
+    reviver_of = jnp.argmax(
+        jnp.logical_and(
+            jnp.arange(static_params.player_count)[:, None] == same_player_interacting_with,
+            is_interacting_with_same_sc_player[None, :]
+        ),
+        axis=-1
+    )
+    revive_food_cost = jnp.asarray(3, dtype=state.player_food.dtype)
+    revive_drink_cost = jnp.asarray(3, dtype=state.player_drink.dtype)
+
+    # Check whether the reviver has enough food and drink (>= 3 each)
+    reviver_has_resources = jnp.logical_and(
+        state.player_food[reviver_of] >= revive_food_cost,
+        state.player_drink[reviver_of] >= revive_drink_cost,
+    )
+
     is_player_being_revived = jnp.logical_and(
         is_player_being_interacted_with_same_sc,
         jnp.logical_and(
             jnp.logical_not(state.player_alive),
             jnp.logical_and(
                 jnp.logical_not(env_params.disable_revive),
-                revive_cooldown_ready,
+                jnp.logical_and(revive_cooldown_ready, reviver_has_resources),
             ),
         ),
     )
+
+    # Deduct food/drink from the reviver: for each successful revive, subtract 3 food and 3 drink.
+    reviver_food_cost = jnp.zeros(static_params.player_count, dtype=state.player_food.dtype)
+    reviver_drink_cost = jnp.zeros(static_params.player_count, dtype=state.player_drink.dtype)
+    reviver_food_cost = reviver_food_cost.at[reviver_of].add(is_player_being_revived.astype(state.player_food.dtype) * revive_food_cost)
+    reviver_drink_cost = reviver_drink_cost.at[reviver_of].add(is_player_being_revived.astype(state.player_drink.dtype) * revive_drink_cost)
 
     attacker_damage = (
         is_interacting_with_diff_sc_player
@@ -56,8 +83,40 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
 
     new_player_health = jnp.where(
         is_player_being_revived,
-        1.0,
+        3.0,
         state.player_health - damage_taken,
+    )
+
+    # Revived agent gets +3 food, +3 drink, max energy, fatigue reset
+    new_player_food = jnp.where(
+        is_player_being_revived,
+        jnp.minimum(state.player_food + revive_food_cost, get_max_food(state)),
+        state.player_food,
+    ) - reviver_food_cost
+    new_player_drink = jnp.where(
+        is_player_being_revived,
+        jnp.minimum(state.player_drink + revive_drink_cost, get_max_drink(state)),
+        state.player_drink,
+    ) - reviver_drink_cost
+    new_player_energy = jnp.where(
+        is_player_being_revived,
+        get_max_energy(state),
+        state.player_energy,
+    )
+    new_player_fatigue = jnp.where(
+        is_player_being_revived,
+        0.0,
+        state.player_fatigue,
+    )
+    new_player_hunger = jnp.where(
+        is_player_being_revived,
+        0.0,
+        state.player_hunger,
+    )
+    new_player_thirst = jnp.where(
+        is_player_being_revived,
+        0.0,
+        state.player_thirst,
     )
     
     # Track kills between teams
@@ -105,6 +164,12 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
 
     state = state.replace(
         player_health=new_player_health,
+        player_food=new_player_food,
+        player_drink=new_player_drink,
+        player_energy=new_player_energy,
+        player_fatigue=new_player_fatigue,
+        player_hunger=new_player_hunger,
+        player_thirst=new_player_thirst,
         revives=state.revives+is_player_being_revived.sum(),
         revive_cooldown_until=new_revive_cooldown_until,
         ff_damage_dealt=state.ff_damage_dealt+damage_taken.sum(),
@@ -1613,7 +1678,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
     rng, _rng = jax.random.split(rng)
     (rng, state), _ = jax.lax.scan(
-        _move_melee_mob, (rng, state), jnp.arange(static_params.max_melee_mobs * static_params.player_count)
+        _move_melee_mob, (rng, state), jnp.arange(static_params.max_melee_mobs)
     )
 
     # Move passive_mobs
@@ -1715,7 +1780,7 @@ def update_mobs(rng, state, params, env_params, static_params):
 
     rng, _rng = jax.random.split(rng)
     (rng, state), _ = jax.lax.scan(
-        _move_passive_mob, (rng, state), jnp.arange(static_params.max_passive_mobs * static_params.player_count)
+        _move_passive_mob, (rng, state), jnp.arange(static_params.max_passive_mobs)
     )
 
     # Move ranged_mobs
@@ -1816,7 +1881,7 @@ def update_mobs(rng, state, params, env_params, static_params):
         # Spawn projectile
         can_spawn_projectile = (
             state.mob_projectiles.mask[state.player_level].sum()
-            < static_params.max_mob_projectiles * static_params.player_count
+            < static_params.max_mob_projectiles
         )
         new_projectile_position = ranged_mobs.position[
             state.player_level, ranged_mob_index
@@ -1934,11 +1999,11 @@ def update_mobs(rng, state, params, env_params, static_params):
         return (rng, state), None
 
     rng, _rng = jax.random.split(rng)
-    if static_params.max_ranged_mobs * static_params.player_count > 0:
+    if static_params.max_ranged_mobs > 0:
         (rng, state), _ = jax.lax.scan(
             _move_ranged_mob,
             (rng, state),
-            jnp.arange(static_params.max_ranged_mobs * static_params.player_count),
+            jnp.arange(static_params.max_ranged_mobs),
         )
 
     # Move projectiles
@@ -2047,7 +2112,7 @@ def update_mobs(rng, state, params, env_params, static_params):
     (rng, state), _ = jax.lax.scan(
         _move_mob_projectile,
         (rng, state),
-        jnp.arange(static_params.max_mob_projectiles * static_params.player_count),
+        jnp.arange(static_params.max_mob_projectiles),
     )
 
     def _move_player_projectile(rng_and_state, projectile_index):
@@ -2220,7 +2285,7 @@ def update_mobs(rng, state, params, env_params, static_params):
     (rng, state), _ = jax.lax.scan(
         _move_player_projectile,
         (rng, state),
-        jnp.arange(static_params.max_player_projectiles * static_params.player_count),
+        jnp.arange(static_params.max_player_projectiles),
     )
 
     return state
@@ -2487,7 +2552,7 @@ def update_plants(state, static_params):
     new_map, _ = jax.lax.scan(
         _set_plant_block,
         state.map[0],
-        jnp.arange(static_params.max_growing_plants * static_params.player_count),
+        jnp.arange(static_params.max_growing_plants),
     )
 
     new_whole_map = state.map.at[0].set(new_map)
@@ -2543,7 +2608,7 @@ def spawn_mobs(state, rng, params, static_params):
         ),
     )
 
-    floor_mob_spawn_chance = FLOOR_MOB_SPAWN_CHANCE * static_params.player_count
+    floor_mob_spawn_chance = FLOOR_MOB_SPAWN_CHANCE
     monster_spawn_coeff = (
         1
         + (state.monsters_killed[state.player_level] < MONSTERS_KILLED_TO_CLEAR_LEVEL)
@@ -2559,7 +2624,7 @@ def spawn_mobs(state, rng, params, static_params):
     # Passive mobs
     can_spawn_passive_mob = (
         state.passive_mobs.mask[state.player_level].sum()
-        < static_params.max_passive_mobs * static_params.player_count
+        < static_params.max_passive_mobs
     )
 
     rng, _rng = jax.random.split(rng)
@@ -2722,7 +2787,7 @@ def spawn_mobs(state, rng, params, static_params):
     # Melee mobs
     can_spawn_melee_mob = (
         state.melee_mobs.mask[state.player_level].sum()
-        < static_params.max_melee_mobs * static_params.player_count
+        < static_params.max_melee_mobs
     )
 
     new_melee_mob_type = FLOOR_MOB_MAPPING[state.player_level, MobType.MELEE.value]
@@ -2834,10 +2899,10 @@ def spawn_mobs(state, rng, params, static_params):
     )
 
     # Ranged mobs (guard against zero slot configuration)
-    if static_params.max_ranged_mobs * static_params.player_count > 0:
+    if static_params.max_ranged_mobs > 0:
         can_spawn_ranged_mob = (
             state.ranged_mobs.mask[state.player_level].sum()
-            < static_params.max_ranged_mobs * static_params.player_count
+            < static_params.max_ranged_mobs
         )
 
         new_ranged_mob_type = FLOOR_MOB_MAPPING[state.player_level, MobType.RANGED.value]
@@ -2973,7 +3038,7 @@ def shoot_projectile(state: EnvState, action: int, static_params: StaticEnvParam
                 jnp.logical_and(
                     state.inventory.arrows[player_index] >= 1,
                     player_projectiles.mask[state.player_level].sum()
-                    < (static_params.max_player_projectiles * static_params.player_count),
+                    < static_params.max_player_projectiles,
                 ),
             ),
         )
@@ -3040,7 +3105,7 @@ def cast_spell(state, action, static_params):
             jnp.logical_and(
                 jnp.logical_or(jnp.logical_or(is_miner[player_index], is_warrior[player_index]), is_forager[player_index]),
                 player_projectiles.mask[state.player_level].sum()
-                < (static_params.max_player_projectiles * static_params.player_count),
+                < static_params.max_player_projectiles,
             )
         )
         new_player_projectiles, new_player_projectile_directions, new_player_projectile_owners = spawn_projectile(
@@ -3857,7 +3922,14 @@ def craftax_step(
     )
     shared_reward = team_rewards.sum(axis=1)  # Sum rewards within each agent's team
 
-    # Add a small team-level shaping bonus only after reward sharing, so it stays a true shared objective.
+    # Add team-level shaping only after reward sharing, so it stays a true shared objective.
+    team_alive_count = jnp.where(team_mask, player_alive[None, :], False).sum(axis=1)
+    extra_alive_teammates = jnp.maximum(team_alive_count - 1, 0)
+    shared_reward = shared_reward + (
+        params.teammate_alive_bonus
+        * extra_alive_teammates.astype(shared_reward.dtype)
+    )
+
     team_all_alive = jnp.where(team_mask, player_alive[None, :], True).all(axis=1)
     shared_reward = shared_reward + params.all_team_alive_bonus * team_all_alive.astype(shared_reward.dtype)
 

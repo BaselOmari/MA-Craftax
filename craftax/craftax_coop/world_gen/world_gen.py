@@ -747,13 +747,13 @@ def generate_world(rng, params, static_params):
         )
 
     melee_mobs = generate_empty_mobs(
-        static_params.max_melee_mobs * static_params.player_count
+        static_params.max_melee_mobs
     )
     ranged_mobs = generate_empty_mobs(
-        static_params.max_ranged_mobs * static_params.player_count
+        static_params.max_ranged_mobs
     )
     passive_mobs = generate_empty_mobs(
-        static_params.max_passive_mobs * static_params.player_count
+        static_params.max_passive_mobs
     )
 
     # Pre-spawn 1-3 snails per team in each team's spawn room
@@ -843,18 +843,18 @@ def generate_world(rng, params, static_params):
         return projectiles, projectile_directions, projectile_owners
 
     mob_projectiles, mob_projectile_directions, mob_projectile_owners = _create_projectiles(
-        static_params.max_mob_projectiles * static_params.player_count
+        static_params.max_mob_projectiles
     )
     player_projectiles, player_projectile_directions, player_projectile_owners = _create_projectiles(
-        static_params.max_player_projectiles * static_params.player_count
+        static_params.max_player_projectiles
     )
 
     # Plants
     growing_plants_positions = jnp.zeros(
-        (static_params.max_growing_plants * static_params.player_count, 2), dtype=jnp.int32
+        (static_params.max_growing_plants, 2), dtype=jnp.int32
     )
-    growing_plants_age = jnp.zeros(static_params.max_growing_plants * static_params.player_count, dtype=jnp.int32)
-    growing_plants_mask = jnp.zeros(static_params.max_growing_plants * static_params.player_count, dtype=bool)
+    growing_plants_age = jnp.zeros(static_params.max_growing_plants, dtype=jnp.int32)
+    growing_plants_mask = jnp.zeros(static_params.max_growing_plants, dtype=bool)
 
     # Potion mapping for episode
     rng, _rng = jax.random.split(rng)
@@ -967,6 +967,7 @@ def generate_world(rng, params, static_params):
         team_alive_time=jnp.zeros((static_params.num_teams,), dtype=jnp.float32),
         damage_dealt_to_other_team=jnp.zeros((static_params.num_teams,), dtype=jnp.float32),
         all_necessities_frac=jnp.ones((static_params.player_count,), dtype=jnp.float32),
+        effective_max_timesteps=jnp.asarray(params.max_timesteps, dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),
     )

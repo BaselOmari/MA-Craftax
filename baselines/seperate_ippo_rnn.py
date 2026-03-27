@@ -487,8 +487,24 @@ def make_train(config, env):
             runner_state = (train_state, env_state, obsv, done, hstate, rng)
             return runner_state, transition
 
+        _early_episode_cap = config.get("EARLY_EPISODE_CAP", 0)
+        _early_episode_cap_until = config.get("EARLY_EPISODE_CAP_UNTIL", 0)
+        _default_max_timesteps = env.default_params.max_timesteps
+
         def _update_step(update_runner_state, unused):
             runner_state, update_steps = update_runner_state
+
+            # Dynamically cap episode length during early training
+            if _early_episode_cap > 0 and _early_episode_cap_until > 0:
+                effective_cap = jax.lax.select(
+                    update_steps < _early_episode_cap_until,
+                    jnp.asarray(_early_episode_cap, dtype=jnp.float32),
+                    jnp.asarray(_default_max_timesteps, dtype=jnp.float32),
+                )
+                train_state, env_state, last_obs, last_done, hstate, rng = runner_state
+                patched_inner = env_state.env_state.replace(effective_max_timesteps=effective_cap)
+                env_state = env_state.replace(env_state=patched_inner)
+                runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
 
             # Save initial hidden state BEFORE rollout for PPO rerun
             initial_hstate = runner_state[4]  # hstate before rollout
@@ -1362,12 +1378,14 @@ def single_run(config):
     disable_revive = config.get("DISABLE_REVIVE", False)
     terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
     reviving_cooldown_steps = config.get("REVIVING_COOLDOWN_STEPS", 0)
+    teammate_alive_bonus = config.get("TEAMMATE_ALIVE_BONUS", 0.0)
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
     dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
     env_params_kwargs = {
         "disable_revive": disable_revive,
         "terminate_on_any_death": terminate_on_any_death,
         "reviving_cooldown_steps": reviving_cooldown_steps,
+        "teammate_alive_bonus": teammate_alive_bonus,
         "all_team_alive_bonus": all_team_alive_bonus,
         "dead_self_penalty_weight": dead_self_penalty_weight,
     }
