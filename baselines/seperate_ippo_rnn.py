@@ -502,7 +502,11 @@ def make_train(config, env):
                     jnp.asarray(_default_max_timesteps, dtype=jnp.float32),
                 )
                 train_state, env_state, last_obs, last_done, hstate, rng = runner_state
-                patched_inner = env_state.env_state.replace(effective_max_timesteps=effective_cap)
+                # env_state is batched over NUM_ENVS here, so broadcast the scalar cap
+                # to keep the state leaf shape consistent for the next vmap(env.step).
+                current_caps = env_state.env_state.effective_max_timesteps
+                patched_caps = jnp.full_like(current_caps, effective_cap)
+                patched_inner = env_state.env_state.replace(effective_max_timesteps=patched_caps)
                 env_state = env_state.replace(env_state=patched_inner)
                 runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
 
