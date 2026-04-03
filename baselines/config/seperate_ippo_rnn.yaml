@@ -11,14 +11,18 @@ ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
+ACTION_MASK_WHILE_DEAD: true
+
+SHARED_REWARD: true
 
 TEAMMATE_ALIVE_BONUS: 0.1
-ALL_TEAM_ALIVE_BONUS: 0.05
+ALL_TEAM_ALIVE_BONUS: 0.15
 DEAD_SELF_PENALTY_WEIGHT: 0.2
 
-EARLY_EPISODE_CAP: 5000          # Max episode length during early training (0 = disabled)
+EARLY_EPISODE_CAP: 2000          # Max episode length during early training (0 = disabled)
 EARLY_EPISODE_CAP_UNTIL: 35000   # Training update step until which the cap applies
 TERMINATE_ON_ANY_DEATH: false
+TERMINATE_ON_ANY_DEATH_OFFSET: 200
 
 NUM_TEAMS: 1
 TEAM_COMPOSITION: [1, 1, 2]  # [FORAGER, FORAGER, WARRIOR] # Specialization values: FORAGER=1, WARRIOR=2, MINER=3

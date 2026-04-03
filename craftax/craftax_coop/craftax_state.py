@@ -146,9 +146,11 @@ class EnvState:
     ticks_food_empty: jnp.ndarray  # (player_count,) cumulative steps with food == 0
     ticks_drink_empty: jnp.ndarray  # (player_count,) cumulative steps with drink == 0
     ticks_energy_empty: jnp.ndarray  # (player_count,) cumulative steps with energy == 0 (and not sleeping)
+    consecutive_dead_steps: jnp.ndarray  # (player_count,) consecutive timesteps each agent has remained dead
     steps_alive: jnp.ndarray  # (player_count,) cumulative steps each agent was alive
     team_alive_time: jnp.ndarray  # (num_teams,) cumulative steps where at least one team member alive
     damage_dealt_to_other_team: jnp.ndarray  # (num_teams,) cumulative damage dealt BY this team TO other teams
+    individual_reward_return: jnp.ndarray  # (player_count,) cumulative per-agent individual reward path
 
     # Misc Metrics
     all_necessities_frac: jnp.ndarray
@@ -183,7 +185,8 @@ class EnvParams:
     friendly_fire: bool = True
     allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
     disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
-    terminate_on_any_death: bool = False  # If True, any single agent death ends the whole episode immediately.
+    terminate_on_any_death: bool = False  # If True, the episode ends once any agent has remained dead longer than terminate_on_any_death_offset.
+    terminate_on_any_death_offset: int = 200  # Dead-step threshold used when terminate_on_any_death is enabled.
     reviving_cooldown_steps: int = 0  # Steps a revived agent must wait before they can be revived again.
     teammate_alive_bonus: float = 0.0  # Shared bonus per additional alive team member beyond the first alive member.
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
@@ -212,7 +215,7 @@ class StaticEnvParams:
 
     # Global mob / projectile / plant caps (no longer scaled by player_count)
     max_melee_mobs: int = 24
-    max_passive_mobs: int = 72
+    max_passive_mobs: int = 87
     max_growing_plants: int = 60
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 18

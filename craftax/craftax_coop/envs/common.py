@@ -77,6 +77,7 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
         info[f"Combat/team_{t}_damage_dealt"] = jnp.full(static_params.player_count, state.damage_dealt_to_other_team[t], dtype=jnp.float32)
 
     # Per-agent metrics
+    info["Reward/individual_reward"] = state.individual_reward_return.astype(jnp.float32)
     info["Movement/walking_distance"] = state.walking_distance.astype(jnp.float32)
     info["Combat/damage_taken_melee"] = state.damage_taken_melee.astype(jnp.float32)
     info["Combat/damage_taken_health_food"] = state.damage_taken_health_food.astype(jnp.float32)

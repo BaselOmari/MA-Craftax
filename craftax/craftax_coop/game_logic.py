@@ -46,10 +46,10 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         ),
         axis=-1
     )
-    revive_food_cost = jnp.asarray(3, dtype=state.player_food.dtype)
-    revive_drink_cost = jnp.asarray(3, dtype=state.player_drink.dtype)
+    revive_food_cost = jnp.asarray(2, dtype=state.player_food.dtype)
+    revive_drink_cost = jnp.asarray(2, dtype=state.player_drink.dtype)
 
-    # Check whether the reviver has enough food and drink (>= 3 each)
+    # Check whether the reviver has enough food and drink (>= 2 each)
     reviver_has_resources = jnp.logical_and(
         state.player_food[reviver_of] >= revive_food_cost,
         state.player_drink[reviver_of] >= revive_drink_cost,
@@ -66,7 +66,7 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         ),
     )
 
-    # Deduct food/drink from the reviver: for each successful revive, subtract 3 food and 3 drink.
+    # Deduct food/drink from the reviver: for each successful revive, subtract 2 food and 2 drink.
     reviver_food_cost = jnp.zeros(static_params.player_count, dtype=state.player_food.dtype)
     reviver_drink_cost = jnp.zeros(static_params.player_count, dtype=state.player_drink.dtype)
     reviver_food_cost = reviver_food_cost.at[reviver_of].add(is_player_being_revived.astype(state.player_food.dtype) * revive_food_cost)
@@ -83,11 +83,12 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
 
     new_player_health = jnp.where(
         is_player_being_revived,
-        3.0,
+        get_max_health(state),
         state.player_health - damage_taken,
     )
 
-    # Revived agent gets +3 food, +3 drink, max energy, fatigue reset
+    # Revived agent gets +2 food, +2 drink from their pre-death state,
+    # plus full health and full energy.
     new_player_food = jnp.where(
         is_player_being_revived,
         jnp.minimum(state.player_food + revive_food_cost, get_max_food(state)),
@@ -3940,13 +3941,29 @@ def craftax_step(
     # Old behavior (global sharing across all agents):
     # shared_reward = individual_reward.sum().repeat(static_params.player_count)
 
+    # Apply team-level shaping also to individual reward path
+    individual_reward_shaped = individual_reward
+    individual_reward_shaped = individual_reward_shaped + (
+        params.teammate_alive_bonus
+        * extra_alive_teammates.astype(individual_reward_shaped.dtype)
+    )
+    individual_reward_shaped = individual_reward_shaped + params.all_team_alive_bonus * team_all_alive.astype(individual_reward_shaped.dtype)
+    dead_self_penalty_ind = params.dead_self_penalty_weight * jnp.logical_not(player_alive).astype(individual_reward_shaped.dtype)
+    individual_reward_shaped = individual_reward_shaped - dead_self_penalty_ind
+
     reward = jax.lax.select(
         params.shared_reward,
         shared_reward,
-        individual_reward
+        individual_reward_shaped
     )
 
-    # Track per-agent steps alive
+    # Track cumulative individual reward path, dead streaks and per-agent steps alive.
+    new_individual_reward_return = state.individual_reward_return + individual_reward_shaped.astype(jnp.float32)
+    new_consecutive_dead_steps = jnp.where(
+        player_alive,
+        jnp.zeros_like(state.consecutive_dead_steps),
+        state.consecutive_dead_steps + 1,
+    )
     new_steps_alive = state.steps_alive + player_alive.astype(jnp.float32)
 
     # Track per-team alive time (tick counts if ANY member is alive)
@@ -3963,8 +3980,10 @@ def craftax_step(
         timestep=state.timestep + 1,
         light_level=calculate_light_level(state.timestep + 1, params),
         state_rng=_rng,
+        individual_reward_return=new_individual_reward_return,
+        consecutive_dead_steps=new_consecutive_dead_steps,
         steps_alive=new_steps_alive,
         team_alive_time=new_team_alive_time,
     )
 
-    return state, reward, individual_reward
+    return state, reward, individual_reward_shaped

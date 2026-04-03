@@ -120,6 +120,7 @@ class Transition(NamedTuple):
     """Full transition including info for logging."""
     global_done: jnp.ndarray
     done: jnp.ndarray
+    alive: jnp.ndarray
     action: jnp.ndarray
     value: jnp.ndarray
     reward: jnp.ndarray
@@ -132,6 +133,7 @@ class TrainBatch(NamedTuple):
     """Batch for PPO update (without info to avoid minibatch issues)."""
     global_done: jnp.ndarray
     done: jnp.ndarray
+    alive: jnp.ndarray
     action: jnp.ndarray
     value: jnp.ndarray
     reward: jnp.ndarray
@@ -289,6 +291,7 @@ def make_train(config, env):
         return optax.GradientTransformation(init_fn, update_fn)
 
     use_reduced_action_space = config.get("USE_REDUCED_ACTION_SPACE", False)
+    action_mask_while_dead = config.get("ACTION_MASK_WHILE_DEAD", False)
     agents_per_team = len(config.get("TEAM_COMPOSITION", [1, 1, 2]))
     reduced_action_id_map = reduced_action_ids(agents_per_team)
     # Reduced mode keeps actions 0..GIVE and appends the team-local GIVE targets.
@@ -300,6 +303,17 @@ def make_train(config, env):
         if use_reduced_action_space:
             return reduced_action_id_map[action]
         return action
+
+    noop_policy_action_idx = 0
+
+    def compute_alive_mask(env_state):
+        return jnp.swapaxes(env_state.env_state.player_alive, 0, 1)
+
+    def apply_dead_action_mask(logits, alive_mask):
+        """Force dead agents to use NOOP by masking out all other actions."""
+        dead_only_noop_logits = jnp.full_like(logits, -1e9)
+        dead_only_noop_logits = dead_only_noop_logits.at[..., noop_policy_action_idx].set(0.0)
+        return jnp.where(alive_mask[..., None], logits, dead_only_noop_logits)
 
     def train(rng):
         # INIT NETWORK - separate params per agent
@@ -369,6 +383,7 @@ def make_train(config, env):
             # done_batch shape: (num_agents, num_envs)
             # last_done is a dict from env, convert to array
             done_batch_in = batchify(last_done, env.agents)
+            alive_batch = compute_alive_mask(env_state)
 
             # Forward pass for each agent with their own params
             # ac_in: (1, num_envs, obs_dim), (1, num_envs)
@@ -386,6 +401,10 @@ def make_train(config, env):
             # pi.logits shape: (num_agents, 1, num_envs, action_dim)
             # value shape: (num_agents, 1, num_envs)
             # aux_pred shape: (num_agents, 1, num_envs, AUX_OUTPUT_DIM)
+
+            if action_mask_while_dead:
+                masked_logits = apply_dead_action_mask(pi.logits, alive_batch[:, None, :])
+                pi = distrax.Categorical(logits=masked_logits)
 
             # Sample actions - distrax is batch-aware, sample directly
             # pi.logits: (num_agents, 1, num_envs, action_dim)
@@ -440,6 +459,7 @@ def make_train(config, env):
             transition = Transition(
                 jnp.tile(done["__all__"][np.newaxis, :], (env.num_agents, 1)),  # (num_agents, num_envs)
                 done_batch_in,   # (num_agents, num_envs)
+                alive_batch,     # (num_agents, num_envs)
                 action,          # (num_agents, num_envs)
                 value,           # (num_agents, num_envs)
                 reward_batch,    # (num_agents, num_envs)
@@ -560,6 +580,7 @@ def make_train(config, env):
             train_batch = TrainBatch(
                 global_done=traj_batch.global_done,
                 done=traj_batch.done,
+                alive=traj_batch.alive,
                 action=traj_batch.action,
                 value=traj_batch.value,
                 reward=traj_batch.reward,
@@ -588,6 +609,7 @@ def make_train(config, env):
                         # Transpose train_batch for per-agent processing
                         obs_per_agent = jnp.transpose(train_batch.obs, (1, 0, 2, 3))  # (num_agents, num_steps, num_envs, obs_dim)
                         done_per_agent = jnp.transpose(train_batch.done, (1, 0, 2))   # (num_agents, num_steps, num_envs)
+                        alive_per_agent = jnp.transpose(train_batch.alive, (1, 0, 2)) # (num_agents, num_steps, num_envs)
                         action_per_agent = jnp.transpose(train_batch.action, (1, 0, 2))  # (num_agents, num_steps, num_envs)
                         
                         _, pi, value, aux = jax.vmap(forward_single_agent)(
@@ -598,6 +620,10 @@ def make_train(config, env):
                         )
                         # pi.logits: (num_agents, num_steps, num_envs_minibatch, action_dim)
                         # value: (num_agents, num_steps, num_envs_minibatch)
+
+                        if action_mask_while_dead:
+                            masked_logits = apply_dead_action_mask(pi.logits, alive_per_agent)
+                            pi = distrax.Categorical(logits=masked_logits)
                         
                         # Use distrax batch operations directly (no vmap over distribution objects)
                         log_prob = pi.log_prob(action_per_agent)
@@ -711,6 +737,7 @@ def make_train(config, env):
                 train_batch_shuffled = TrainBatch(
                     global_done=shuffle_batch(train_batch.global_done),
                     done=shuffle_batch(train_batch.done),
+                    alive=shuffle_batch(train_batch.alive),
                     action=shuffle_batch(train_batch.action),
                     value=shuffle_batch(train_batch.value),
                     reward=shuffle_batch(train_batch.reward),
@@ -748,6 +775,7 @@ def make_train(config, env):
                 train_batch_mb = TrainBatch(
                     global_done=minibatch_array(train_batch_shuffled.global_done),
                     done=minibatch_array(train_batch_shuffled.done),
+                    alive=minibatch_array(train_batch_shuffled.alive),
                     action=minibatch_array(train_batch_shuffled.action),
                     value=minibatch_array(train_batch_shuffled.value),
                     reward=minibatch_array(train_batch_shuffled.reward),
@@ -908,20 +936,33 @@ def make_train(config, env):
                     if mask0.any():
                         to_log["overview/episode_length"] = np.asarray(ep_lengths[:, :, 0][mask0].mean()).item()
 
-                    # Overview reward as mean across all agents (agent-weighted).
+                    # Overview shared/team reward as mean across all agent returns.
+                    # When SHARED_REWARD=True, all per-agent returns are identical and
+                    # this exactly matches the shared reward. When SHARED_REWARD=False,
+                    # this stays a useful team-level overview metric.
                     all_agent_returns = []
                     for ai in range(num_agents):
                         mask_ai = ep_mask[:, :, ai]
                         if mask_ai.any():
-                            all_agent_returns.append(np.asarray(ep_returns[:, :, ai][mask_ai].mean()).item())
+                            agent_return = np.asarray(ep_returns[:, :, ai][mask_ai].mean()).item()
+                            all_agent_returns.append(agent_return)
+                            to_log[f"agent_{ai}/episode_return"] = agent_return
+                            individual_reward = _agent_mean("Reward/individual_reward", ai)
+                            to_log[f"agent_{ai}/individual_reward"] = (
+                                individual_reward if individual_reward is not None else agent_return
+                            )
                     if all_agent_returns:
-                        to_log["overview/avg_reward"] = float(np.mean(all_agent_returns))
+                        mean_return = float(np.mean(all_agent_returns))
+                        to_log["overview/shared_reward"] = mean_return
+                        # Backward-compatible alias for older dashboards.
+                        to_log["overview/avg_reward"] = mean_return
 
-                    # overview/ movement (mean walking distance across all agents)
+                    # Per-agent and overview movement (mean walking distance over returned episodes)
                     all_walk = []
                     for ai in range(num_agents):
                         v = _agent_mean("Movement/walking_distance", ai)
                         if v is not None:
+                            to_log[f"agent_{ai}/movement"] = v
                             all_walk.append(v)
                     if all_walk:
                         to_log["overview/movement"] = np.mean(all_walk)
@@ -1181,6 +1222,11 @@ def make_train(config, env):
                 done_batch_in,   # (num_agents, 1)
             )
 
+            if action_mask_while_dead:
+                alive_batch = compute_alive_mask(env_state)
+                masked_logits = apply_dead_action_mask(pi.logits, alive_batch[:, None, :])
+                pi = distrax.Categorical(logits=masked_logits)
+
             action = pi.sample(seed=_rng)    # (num_agents, 1, 1)
             action = action.squeeze(axis=1)  # (num_agents, 1)
 
@@ -1381,18 +1427,24 @@ def single_run(config):
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
     disable_revive = config.get("DISABLE_REVIVE", False)
     terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
+    terminate_on_any_death_offset = config.get("TERMINATE_ON_ANY_DEATH_OFFSET", 200)
     reviving_cooldown_steps = config.get("REVIVING_COOLDOWN_STEPS", 0)
+    action_mask_while_dead = config.get("ACTION_MASK_WHILE_DEAD", False)
     teammate_alive_bonus = config.get("TEAMMATE_ALIVE_BONUS", 0.0)
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
     dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
+    shared_reward = config.get("SHARED_REWARD", True)
     env_params_kwargs = {
         "disable_revive": disable_revive,
         "terminate_on_any_death": terminate_on_any_death,
+        "terminate_on_any_death_offset": terminate_on_any_death_offset,
         "reviving_cooldown_steps": reviving_cooldown_steps,
         "teammate_alive_bonus": teammate_alive_bonus,
         "all_team_alive_bonus": all_team_alive_bonus,
         "dead_self_penalty_weight": dead_self_penalty_weight,
+        "shared_reward": shared_reward,
     }
+    config["ACTION_MASK_WHILE_DEAD"] = action_mask_while_dead
     env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
 
     wandb.init(
