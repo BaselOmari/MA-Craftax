@@ -962,16 +962,40 @@ def make_train(config, env):
                     for ai in range(num_agents):
                         v = _agent_mean("Movement/walking_distance", ai)
                         if v is not None:
+                            to_log[f"agent_{ai}/walking_distance"] = v
                             to_log[f"agent_{ai}/movement"] = v
                             all_walk.append(v)
                     if all_walk:
+                        to_log["overview/walking_distance"] = np.mean(all_walk)
                         to_log["overview/movement"] = np.mean(all_walk)
+
+                    combat_damage_keys = [
+                        "damage_taken_melee",
+                        "damage_taken_health_food",
+                        "damage_taken_health_drink",
+                        "damage_taken_health_energy",
+                        "damage_taken_health_other",
+                        "damage_taken_ff",
+                    ]
+                    for ai in range(num_agents):
+                        for dk in combat_damage_keys:
+                            v = _agent_mean(f"Combat/{dk}", ai)
+                            if v is not None:
+                                to_log[f"agent_{ai}/{dk}"] = v
 
                     # overview/ trades (broadcast scalars, take from agent 0)
                     for trade_key in ["total_trades", "food_trades", "drink_trades"]:
                         v = _global_mean(f"Trade/{trade_key}")
                         if v is not None:
                             to_log[f"overview/{trade_key}"] = v
+
+                    v = _global_mean("Revive/revives")
+                    if v is not None:
+                        to_log["overview/revives"] = v
+                    for ai in range(num_agents):
+                        v = _agent_mean("Revive/revives", ai)
+                        if v is not None:
+                            to_log[f"agent_{ai}/revives"] = v
 
                     # ── team_{t}/ metrics ──
                     for ti in range(num_teams):
@@ -992,9 +1016,7 @@ def make_train(config, env):
                             to_log[f"{tp}/walking_distance"] = v
 
                         # combat: damage taken (aggregated over team members)
-                        for dk in ["damage_taken_melee",
-                                   "damage_taken_health_food", "damage_taken_health_drink",
-                                   "damage_taken_health_energy", "damage_taken_health_other", "damage_taken_ff"]:
+                        for dk in combat_damage_keys:
                             v = _team_mean(f"Combat/{dk}", ti)
                             if v is not None:
                                 to_log[f"{tp}/{dk}"] = v
@@ -1063,6 +1085,9 @@ def make_train(config, env):
                              'dist_to_melee_l1',
                              'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
                              'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
+                             'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
+                             'trade_give_partner_id', 'trade_receive_partner_id',
+                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id',
                              'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                              ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                    for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1082,6 +1107,9 @@ def make_train(config, env):
                                       'melee_on_screen', 'dist_to_passive_l1', 'passive_on_screen', 'dist_to_ranged_l1',
                                       'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby',
                                       'num_ranged_nearby',
+                                      'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
+                                      'trade_give_partner_id', 'trade_receive_partner_id',
+                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id',
                                       'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                                       ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                             for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]

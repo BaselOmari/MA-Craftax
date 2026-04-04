@@ -15,7 +15,7 @@ from jaxmarl.environments.multi_agent_env import MultiAgentEnv
 
 from craftax_coop.constants import *
 from craftax_coop.craftax_state import EnvState, EnvParams, StaticEnvParams
-from craftax_coop.envs.common import compute_score
+from craftax_coop.envs.common import compute_score, compute_step_event_info
 from craftax_coop.game_logic import craftax_step
 from craftax_coop.renderer.renderer_symbolic import render_craftax_symbolic
 from craftax_coop.util.game_logic_utils import has_beaten_boss
@@ -58,6 +58,7 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
         info = {}
         info["user_info"] = compute_score(state, done, self.static_env_params)
         info["user_info"]["Reward/individual_reward_step"] = individual_reward
+        info.update(compute_step_event_info(state))
 
         # info["discount"] = self.discount(state, self.default_params)
         agent_rewards = {n: r for n,r in zip(self.agents, reward)}

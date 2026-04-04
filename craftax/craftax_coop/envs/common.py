@@ -70,6 +70,7 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     info["Trade/total_trades"] = jnp.full(static_params.player_count, state.trade_count, dtype=jnp.float32)
     info["Trade/food_trades"] = jnp.full(static_params.player_count, state.food_trade_count, dtype=jnp.float32)
     info["Trade/drink_trades"] = jnp.full(static_params.player_count, state.drink_trade_count, dtype=jnp.float32)
+    info["Revive/revives"] = jnp.full(static_params.player_count, state.revives, dtype=jnp.float32)
 
     # Team kill metrics (broadcast to match player dimension)
     for t in range(static_params.num_teams):
@@ -86,3 +87,17 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     info["Combat/damage_taken_health_other"] = state.damage_taken_health_other.astype(jnp.float32)
     info["Combat/damage_taken_ff"] = state.damage_taken_ff.astype(jnp.float32)
     return info
+
+
+def compute_step_event_info(state: EnvState):
+    return {
+        "trade_give": state.log_trade_give.astype(jnp.float32),
+        "trade_receive": state.log_trade_receive.astype(jnp.float32),
+        "trade_give_material_id": state.log_trade_give_material_id.astype(jnp.float32),
+        "trade_receive_material_id": state.log_trade_receive_material_id.astype(jnp.float32),
+        "trade_give_partner_id": state.log_trade_give_partner_id.astype(jnp.float32),
+        "trade_receive_partner_id": state.log_trade_receive_partner_id.astype(jnp.float32),
+        "revive_as_reviver": state.log_revive_as_reviver.astype(jnp.float32),
+        "revive_as_revived": state.log_revive_as_revived.astype(jnp.float32),
+        "revive_partner_id": state.log_revive_partner_id.astype(jnp.float32),
+    }

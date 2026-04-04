@@ -163,6 +163,20 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         state.revive_cooldown_until,
     )
 
+    revive_as_revived = is_player_being_revived.astype(jnp.int32)
+    revive_as_reviver = jnp.zeros(static_params.player_count, dtype=jnp.int32)
+    revive_as_reviver = revive_as_reviver.at[reviver_of].add(revive_as_revived)
+    revive_as_reviver = jnp.minimum(revive_as_reviver, 1)
+
+    revive_partner_id = jnp.full((static_params.player_count,), -1, dtype=jnp.int32)
+    revive_partner_id = jnp.where(is_player_being_revived, reviver_of.astype(jnp.int32), revive_partner_id)
+    successful_reviver = revive_as_reviver.astype(bool)
+    revive_partner_id = jnp.where(
+        successful_reviver,
+        same_player_interacting_with.astype(jnp.int32),
+        revive_partner_id,
+    )
+
     state = state.replace(
         player_health=new_player_health,
         player_food=new_player_food,
@@ -173,11 +187,12 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
         player_thirst=new_player_thirst,
         revives=state.revives+is_player_being_revived.sum(),
         revive_cooldown_until=new_revive_cooldown_until,
-        ff_damage_dealt=state.ff_damage_dealt+damage_taken.sum(),
         team_kills=new_team_kills,
-        damage_taken_total=state.damage_taken_total + damage_taken,
         damage_taken_ff=state.damage_taken_ff + damage_taken,
         damage_dealt_to_other_team=new_damage_dealt_to_other_team,
+        log_revive_as_reviver=revive_as_reviver,
+        log_revive_as_revived=revive_as_revived,
+        log_revive_partner_id=revive_partner_id,
     )
     return state
 
@@ -1606,7 +1621,6 @@ def update_mobs(rng, state, params, env_params, static_params):
                     state.achievements[:, Achievement.WAKE_UP.value], is_waking_player
                 )
             ),
-            damage_taken_total=state.damage_taken_total + melee_damage_taken,
             damage_taken_melee=state.damage_taken_melee + melee_damage_taken,
         )
 
@@ -2103,8 +2117,6 @@ def update_mobs(rng, state, params, env_params, static_params):
             map=state.map.at[state.player_level, position[0], position[1]].set(
                 new_block
             ),
-            damage_taken_total=state.damage_taken_total + ranged_damage_taken,
-            damage_taken_ranged=state.damage_taken_ranged + ranged_damage_taken,
         )
 
         return (rng, state), None
@@ -2275,7 +2287,6 @@ def update_mobs(rng, state, params, env_params, static_params):
                     state.player_level, projectile_index
                 ].set(new_mask),
             ),
-            damage_taken_total=state.damage_taken_total + ff_ranged_damage_taken,
             damage_taken_ff=state.damage_taken_ff + ff_ranged_damage_taken,
             damage_dealt_to_other_team=new_damage_dealt_projectile,
         )
@@ -2427,8 +2438,6 @@ def update_player_intrinsics(state, action, static_params):
     all_necessities = necessities.all(axis=1)
     # all_necessities = jnp.full((static_params.player_count,), True, dtype=bool)
 
-    new_all_necessities_frac = (state.all_necessities_frac * state.timestep + all_necessities)/(state.timestep+1)
-
     recover_all = jnp.where(
         state.is_sleeping, 
         2.0, 
@@ -2480,8 +2489,6 @@ def update_player_intrinsics(state, action, static_params):
     state = state.replace(
         player_recover=jnp.where(state.player_alive, new_recover, state.player_recover),
         player_health=updated_health,
-        damage_taken_total=state.damage_taken_total + intrinsic_health_damage,
-        damage_taken_health=state.damage_taken_health + intrinsic_health_damage,
         damage_taken_health_food=state.damage_taken_health_food + intrinsic_damage_food,
         damage_taken_health_drink=state.damage_taken_health_drink + intrinsic_damage_drink,
         damage_taken_health_energy=state.damage_taken_health_energy + intrinsic_damage_energy,
@@ -2510,14 +2517,6 @@ def update_player_intrinsics(state, action, static_params):
     state = state.replace(
         player_recover_mana=jnp.where(state.player_alive, new_recover_mana, state.player_recover_mana),
         player_mana=jnp.where(state.player_alive, new_mana, state.player_mana),
-        all_necessities_frac=new_all_necessities_frac
-    )
-
-    # Track how many ticks each necessity was depleted (alive players only)
-    state = state.replace(
-        ticks_food_empty=state.ticks_food_empty + food_empty.astype(jnp.int32),
-        ticks_drink_empty=state.ticks_drink_empty + drink_empty.astype(jnp.int32),
-        ticks_energy_empty=state.ticks_energy_empty + energy_empty.astype(jnp.int32),
     )
 
     return state
@@ -2583,15 +2582,10 @@ def move_player(state, actions, params, static_params):
         state.player_direction * (1 - is_new_direction) + actions * is_new_direction
     )
 
-    ticks_moved = state.ticks_moved + (step_distance > 0).astype(jnp.int32)
-    ticks_tried_moving = state.ticks_tried_moving + is_new_direction.astype(jnp.int32)
-
     state = state.replace(
         player_position=position,
         player_direction=new_direction,
         walking_distance=state.walking_distance + step_distance,
-        ticks_moved=ticks_moved,
-        ticks_tried_moving=ticks_tried_moving,
     )
 
     return state
@@ -3266,8 +3260,6 @@ def drink_potion(state, action):
         player_mana=state.player_mana + delta_mana,
         player_energy=state.player_energy + delta_energy,
         achievements=new_achievements,
-        damage_taken_total=state.damage_taken_total + potion_health_damage,
-        damage_taken_health=state.damage_taken_health + potion_health_damage,
         damage_taken_health_other=state.damage_taken_health_other + potion_health_damage,
     )
 
@@ -3549,8 +3541,6 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     new_trade_count = state.trade_count
     new_food_trade_count = state.food_trade_count
     new_drink_trade_count = state.drink_trade_count
-    new_wood_trade_count = state.wood_trade_count
-    new_same_trade_count = state.same_trade_count
 
     agent_indices = jnp.arange(static_params.player_count)
     agents_per_team = len(static_params.team_composition)
@@ -3602,7 +3592,14 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         state.player_alive[player_trading_to]        
     )
 
-    def _new_material_value(material_type, current_material_stock, material_max_value, old_trade_count, old_same):
+    trade_give = state.log_trade_give
+    trade_receive = state.log_trade_receive
+    trade_give_material_id = state.log_trade_give_material_id
+    trade_receive_material_id = state.log_trade_receive_material_id
+    trade_give_partner_id = state.log_trade_give_partner_id
+    trade_receive_partner_id = state.log_trade_receive_partner_id
+
+    def _new_material_value(material_type, current_material_stock, material_max_value, old_trade_count):
         other_player_is_requesting_material = jnp.logical_and(
             other_player_is_requesting,
             state.request_type[player_trading_to] == material_type
@@ -3620,14 +3617,41 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         new_material = current_material_stock - 1 * is_giving_material
         new_material = new_material.at[player_trading_to].add(is_giving_material)
         new_trade = old_trade_count + is_giving_material.sum()
-        # Check if giver (current agent i) has same subclass as receiver (player_trading_to[i])
-        giver_subclass = state.player_sc
-        receiver_subclass = state.player_sc[player_trading_to]
-        same_trade = old_same + jnp.logical_and(
-            is_giving_material,
-            giver_subclass == receiver_subclass
-        ).sum()
-        return new_material, new_trade, same_trade
+        return new_material, new_trade, is_giving_material
+
+    def _record_trade_events(
+        is_giving_material,
+        material_code,
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ):
+        trade_give = jnp.where(is_giving_material, 1, trade_give)
+        trade_give_material_id = jnp.where(is_giving_material, material_code, trade_give_material_id)
+        trade_give_partner_id = jnp.where(is_giving_material, player_trading_to, trade_give_partner_id)
+
+        receiver_mask = jnp.logical_and(
+            is_giving_material[:, None],
+            player_trading_to[:, None] == agent_indices[None, :],
+        )
+        receiver_has_event = receiver_mask.any(axis=0)
+        receiver_partner = jnp.argmax(receiver_mask, axis=0).astype(jnp.int32)
+
+        trade_receive = jnp.where(receiver_has_event, 1, trade_receive)
+        trade_receive_material_id = jnp.where(receiver_has_event, material_code, trade_receive_material_id)
+        trade_receive_partner_id = jnp.where(receiver_has_event, receiver_partner, trade_receive_partner_id)
+
+        return (
+            trade_give,
+            trade_receive,
+            trade_give_material_id,
+            trade_receive_material_id,
+            trade_give_partner_id,
+            trade_receive_partner_id,
+        )
     
     # Block food/drink trades between foragers
     giver_spec = state.player_specialization
@@ -3641,9 +3665,25 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     # Food — blocked between foragers
     is_giving = jnp.logical_and(_is_giving_all, jnp.logical_not(both_forager))
     food_trade_count = 0
-    same_food = 0
-    new_food, food_trade_count, same_food = _new_material_value(
-        Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count, same_food
+    new_food, food_trade_count, food_trade_mask = _new_material_value(
+        Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count
+    )
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        food_trade_mask,
+        jnp.int32(0),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
     )
     # No hunger reset on trade — food is added but hunger counter keeps ticking.
     # This prevents the ping-pong exploit (passing 1 food back and forth to reset hunger).
@@ -3655,13 +3695,28 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     )
     new_food_trade_count += food_trade_count
     new_trade_count += food_trade_count
-    new_same_trade_count += same_food
 
     # Drink — blocked between foragers (is_giving still excludes forager pairs)
     drink_trade_count = 0
-    same_drink = 0
-    new_drink, drink_trade_count, same_drink = _new_material_value(
-        Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count, same_drink
+    new_drink, drink_trade_count, drink_trade_mask = _new_material_value(
+        Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count
+    )
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        drink_trade_mask,
+        jnp.int32(1),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
     )
     # No thirst reset on trade — same rationale as hunger above.
     new_thirst = state.player_thirst
@@ -3672,38 +3727,156 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     )
     new_drink_trade_count += drink_trade_count
     new_trade_count += drink_trade_count
-    new_same_trade_count += same_drink
 
     # Restore is_giving for non-food/drink materials (forager restriction only applies to food/drink)
     is_giving = _is_giving_all
 
     # Inventory Materials
-    wood_trade_count = 0
-    same_wood = 0
-    new_wood, wood_trade_count, same_wood = _new_material_value(
-        Action.REQUEST_WOOD.value, state.inventory.wood, 99, wood_trade_count, same_wood
+    new_wood, new_trade_count, wood_trade_mask = _new_material_value(
+        Action.REQUEST_WOOD.value, state.inventory.wood, 99, new_trade_count
     )
-    new_wood_trade_count += wood_trade_count
-    new_trade_count += wood_trade_count
-    new_same_trade_count += same_wood
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        wood_trade_mask,
+        jnp.int32(2),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    )
 
-    new_stone, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_STONE.value, state.inventory.stone, 99, new_trade_count, new_same_trade_count
+    new_stone, new_trade_count, stone_trade_mask = _new_material_value(
+        Action.REQUEST_STONE.value, state.inventory.stone, 99, new_trade_count
     )
-    new_iron, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_IRON.value, state.inventory.iron, 99, new_trade_count, new_same_trade_count
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        stone_trade_mask,
+        jnp.int32(3),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
     )
-    new_coal, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_COAL.value, state.inventory.coal, 99, new_trade_count, new_same_trade_count
+
+    new_iron, new_trade_count, iron_trade_mask = _new_material_value(
+        Action.REQUEST_IRON.value, state.inventory.iron, 99, new_trade_count
     )
-    new_diamond, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_DIAMOND.value, state.inventory.diamond, 99, new_trade_count, new_same_trade_count
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        iron_trade_mask,
+        jnp.int32(4),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
     )
-    new_ruby, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_RUBY.value, state.inventory.ruby, 99, new_trade_count, new_same_trade_count
+
+    new_coal, new_trade_count, coal_trade_mask = _new_material_value(
+        Action.REQUEST_COAL.value, state.inventory.coal, 99, new_trade_count
     )
-    new_sapphire, new_trade_count, new_same_trade_count = _new_material_value(
-        Action.REQUEST_SAPPHIRE.value, state.inventory.sapphire, 99, new_trade_count, new_same_trade_count
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        coal_trade_mask,
+        jnp.int32(5),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    )
+
+    new_diamond, new_trade_count, diamond_trade_mask = _new_material_value(
+        Action.REQUEST_DIAMOND.value, state.inventory.diamond, 99, new_trade_count
+    )
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        diamond_trade_mask,
+        jnp.int32(6),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    )
+
+    new_ruby, new_trade_count, ruby_trade_mask = _new_material_value(
+        Action.REQUEST_RUBY.value, state.inventory.ruby, 99, new_trade_count
+    )
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        ruby_trade_mask,
+        jnp.int32(7),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    )
+
+    new_sapphire, new_trade_count, sapphire_trade_mask = _new_material_value(
+        Action.REQUEST_SAPPHIRE.value, state.inventory.sapphire, 99, new_trade_count
+    )
+    (
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
+    ) = _record_trade_events(
+        sapphire_trade_mask,
+        jnp.int32(8),
+        trade_give,
+        trade_receive,
+        trade_give_material_id,
+        trade_receive_material_id,
+        trade_give_partner_id,
+        trade_receive_partner_id,
     )
         
     state = state.replace(
@@ -3724,8 +3897,12 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         trade_count=new_trade_count,
         food_trade_count=new_food_trade_count,
         drink_trade_count=new_drink_trade_count,
-        wood_trade_count=new_wood_trade_count,
-        same_trade_count=new_same_trade_count,
+        log_trade_give=trade_give,
+        log_trade_receive=trade_receive,
+        log_trade_give_material_id=trade_give_material_id,
+        log_trade_receive_material_id=trade_receive_material_id,
+        log_trade_give_partner_id=trade_give_partner_id,
+        log_trade_receive_partner_id=trade_receive_partner_id,
     )
     return state
 
@@ -3793,6 +3970,18 @@ def craftax_step(
     ) -> Tuple[EnvState, chex.Array]:
     init_achievements = state.achievements
     init_health = state.player_health
+
+    state = state.replace(
+        log_trade_give=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_trade_receive=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_trade_give_material_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_trade_receive_material_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_trade_give_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_trade_receive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_revive_as_reviver=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+    )
 
     # Interrupt action if dead, sleeping or resting
     cant_do_action = jnp.logical_or(
@@ -3957,21 +4146,13 @@ def craftax_step(
         individual_reward_shaped
     )
 
-    # Track cumulative individual reward path, dead streaks and per-agent steps alive.
+    # Track cumulative individual reward path and dead streaks.
     new_individual_reward_return = state.individual_reward_return + individual_reward_shaped.astype(jnp.float32)
     new_consecutive_dead_steps = jnp.where(
         player_alive,
         jnp.zeros_like(state.consecutive_dead_steps),
         state.consecutive_dead_steps + 1,
     )
-    new_steps_alive = state.steps_alive + player_alive.astype(jnp.float32)
-
-    # Track per-team alive time (tick counts if ANY member is alive)
-    agents_per_team = len(static_params.team_composition)
-    # Reshape to (num_teams, agents_per_team) and check if any alive per team
-    player_alive_by_team = player_alive.reshape(static_params.num_teams, agents_per_team)
-    team_has_alive_member = player_alive_by_team.any(axis=1).astype(jnp.float32)
-    new_team_alive_time = state.team_alive_time + team_has_alive_member
 
     rng, _rng = jax.random.split(rng)
 
@@ -3982,8 +4163,6 @@ def craftax_step(
         state_rng=_rng,
         individual_reward_return=new_individual_reward_return,
         consecutive_dead_steps=new_consecutive_dead_steps,
-        steps_alive=new_steps_alive,
-        team_alive_time=new_team_alive_time,
     )
 
     return state, reward, individual_reward_shaped

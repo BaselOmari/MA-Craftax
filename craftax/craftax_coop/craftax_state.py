@@ -125,35 +125,28 @@ class EnvState:
     trade_count: int
     food_trade_count: int
     drink_trade_count: int
-    wood_trade_count: int
-    same_trade_count: int
     revives: int
     revive_cooldown_until: jnp.ndarray  # (player_count,) earliest timestep when each agent can be revived again
-    ff_damage_dealt: float
     team_kills: jnp.ndarray  # (num_teams,) array: kills against other teams, indexed by killer's team
     walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
-    ticks_moved: jnp.ndarray  # (player_count,) ticks where agent actually moved (step_distance > 0)
-    ticks_tried_moving: jnp.ndarray  # (player_count,) ticks where agent chose a move action (incl. blocked)
-    damage_taken_total: jnp.ndarray  # (player_count,) cumulative damage taken from all sources
     damage_taken_melee: jnp.ndarray  # (player_count,) cumulative mob melee damage taken
-    damage_taken_ranged: jnp.ndarray  # (player_count,) cumulative ranged/projectile damage taken
-    damage_taken_health: jnp.ndarray  # (player_count,) cumulative health/intrinsic/potion damage taken
     damage_taken_health_food: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty food
     damage_taken_health_drink: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty drink
     damage_taken_health_energy: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty energy
     damage_taken_health_other: jnp.ndarray  # (player_count,) cumulative health damage from non-necessity sources (e.g., potions)
     damage_taken_ff: jnp.ndarray  # (player_count,) cumulative friendly-fire (player-vs-player) damage taken
-    ticks_food_empty: jnp.ndarray  # (player_count,) cumulative steps with food == 0
-    ticks_drink_empty: jnp.ndarray  # (player_count,) cumulative steps with drink == 0
-    ticks_energy_empty: jnp.ndarray  # (player_count,) cumulative steps with energy == 0 (and not sleeping)
     consecutive_dead_steps: jnp.ndarray  # (player_count,) consecutive timesteps each agent has remained dead
-    steps_alive: jnp.ndarray  # (player_count,) cumulative steps each agent was alive
-    team_alive_time: jnp.ndarray  # (num_teams,) cumulative steps where at least one team member alive
     damage_dealt_to_other_team: jnp.ndarray  # (num_teams,) cumulative damage dealt BY this team TO other teams
     individual_reward_return: jnp.ndarray  # (player_count,) cumulative per-agent individual reward path
-
-    # Misc Metrics
-    all_necessities_frac: jnp.ndarray
+    log_trade_give: jnp.ndarray  # (player_count,) 1 if agent successfully gave a trade item this step, else 0
+    log_trade_receive: jnp.ndarray  # (player_count,) 1 if agent successfully received a trade item this step, else 0
+    log_trade_give_material_id: jnp.ndarray  # (player_count,) compact material code, -1 if none
+    log_trade_receive_material_id: jnp.ndarray  # (player_count,) compact material code, -1 if none
+    log_trade_give_partner_id: jnp.ndarray  # (player_count,) trade recipient agent id, -1 if none
+    log_trade_receive_partner_id: jnp.ndarray  # (player_count,) trade sender agent id, -1 if none
+    log_revive_as_reviver: jnp.ndarray  # (player_count,) 1 if agent revived another this step, else 0
+    log_revive_as_revived: jnp.ndarray  # (player_count,) 1 if agent was revived this step, else 0
+    log_revive_partner_id: jnp.ndarray  # (player_count,) counterpart agent id for revive event, -1 if none
 
     # Episode length cap (dynamically set by training loop).
     # Keep this float32 so reset/step states stay dtype-consistent under JAX auto-reset.
