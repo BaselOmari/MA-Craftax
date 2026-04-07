@@ -11,7 +11,7 @@ ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
-ACTION_MASK_WHILE_DEAD: true
+ACTION_MASK_WHILE_DEAD: false
 
 SHARED_REWARD: true
 
