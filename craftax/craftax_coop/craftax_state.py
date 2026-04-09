@@ -147,6 +147,7 @@ class EnvState:
     log_revive_as_reviver: jnp.ndarray  # (player_count,) 1 if agent revived another this step, else 0
     log_revive_as_revived: jnp.ndarray  # (player_count,) 1 if agent was revived this step, else 0
     log_revive_partner_id: jnp.ndarray  # (player_count,) counterpart agent id for revive event, -1 if none
+    log_melee_kills: jnp.ndarray  # (player_count,) melee mob kills credited to each agent during the current step
 
     # Episode length cap (dynamically set by training loop).
     # Keep this float32 so reset/step states stay dtype-consistent under JAX auto-reset.
@@ -184,14 +185,14 @@ class EnvParams:
     teammate_alive_bonus: float = 0.0  # Shared bonus per additional alive team member beyond the first alive member.
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
     dead_self_penalty_weight: float = 0.0  # Per-agent penalty applied only to dead agents after shared reward aggregation.
+    warrior_melee_kill_reward: float = 0.0  # Bonus given to warriors per credited melee-mob kill.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
 
-    # Trading proximity (square/Chebyshev radius in tiles).
-    # before: Default keeps the old FOV-box behavior for OBS_DIM=(9,11): row<=5, col<=6,
-    # approximated as a single square radius
-    trade_radius: int = 10
+    # Trading proximity in tiles.
+    trade_radius: int = 18
+    trade_radius_shape: str = "square"  # "square" (Chebyshev) or "circle" (Euclidean)
 
 
 @struct.dataclass
@@ -207,8 +208,8 @@ class StaticEnvParams:
     num_teams: int = 2
 
     # Global mob / projectile / plant caps (no longer scaled by player_count)
-    max_melee_mobs: int = 24
-    max_passive_mobs: int = 87
+    max_melee_mobs: int = 55
+    max_passive_mobs: int = 131
     max_growing_plants: int = 60
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 18

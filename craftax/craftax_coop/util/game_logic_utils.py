@@ -105,7 +105,7 @@ def attack_mob_class(
     return mobs, did_kill_mob, is_attacking_mob, mobs_killed, new_achievements
 
 
-def attack_mob(state, doing_attack, position, damage_vector, can_eat):
+def attack_mob(state, doing_attack, position, damage_vector, can_eat, attacker_indices):
     monsters_killed = state.monsters_killed
 
     # Melee
@@ -125,10 +125,16 @@ def attack_mob(state, doing_attack, position, damage_vector, can_eat):
         1,
     )
     monsters_killed = monsters_killed.at[state.player_level].add(melee_mobs_killed)
+    melee_kill_credit = (
+        jnp.zeros_like(state.log_melee_kills)
+        .at[attacker_indices]
+        .add(did_kill_melee_mob.astype(state.log_melee_kills.dtype))
+    )
 
     state = state.replace(
         melee_mobs=new_melee_mobs,
         achievements=new_achievements,
+        log_melee_kills=state.log_melee_kills + melee_kill_credit,
     )
 
     # Cow

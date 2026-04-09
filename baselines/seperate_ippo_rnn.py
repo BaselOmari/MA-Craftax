@@ -1461,7 +1461,16 @@ def single_run(config):
     teammate_alive_bonus = config.get("TEAMMATE_ALIVE_BONUS", 0.0)
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
     dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
+    warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
+    trade_radius = int(config.get("TRADE_RADIUS", 18))
+    trade_radius_shape = str(config.get("TRADE_RADIUS_SHAPE", "square")).lower()
     shared_reward = config.get("SHARED_REWARD", True)
+    if trade_radius < 0:
+        raise ValueError(f"TRADE_RADIUS must be >= 0, got {trade_radius}.")
+    if trade_radius_shape not in {"square", "circle"}:
+        raise ValueError(
+            f"TRADE_RADIUS_SHAPE must be 'square' or 'circle', got {trade_radius_shape!r}."
+        )
     env_params_kwargs = {
         "disable_revive": disable_revive,
         "terminate_on_any_death": terminate_on_any_death,
@@ -1470,6 +1479,9 @@ def single_run(config):
         "teammate_alive_bonus": teammate_alive_bonus,
         "all_team_alive_bonus": all_team_alive_bonus,
         "dead_self_penalty_weight": dead_self_penalty_weight,
+        "warrior_melee_kill_reward": warrior_melee_kill_reward,
+        "trade_radius": trade_radius,
+        "trade_radius_shape": trade_radius_shape,
         "shared_reward": shared_reward,
     }
     config["ACTION_MASK_WHILE_DEAD"] = action_mask_while_dead

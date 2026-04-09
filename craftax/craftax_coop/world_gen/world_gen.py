@@ -864,6 +864,81 @@ def generate_world(rng, params, static_params):
                         jnp.where(should_spawn, snail_type_id, passive_mobs.type_id[START_LEVEL, mob_idx])),
                 )
 
+    # Per team, spawn 0-1 melee predator with 50% probability in one of the two spawn rooms.
+    melee_type_id = FLOOR_MOB_MAPPING[START_LEVEL, MobType.MELEE.value]
+    melee_health = MOB_TYPE_HEALTH_MAPPING[melee_type_id, MobType.MELEE.value]
+    melee_spawn_offsets = jnp.array(
+        [
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+            [1, 1],
+            [-1, 1],
+            [1, -1],
+            [-1, -1],
+            [2, 0],
+            [-2, 0],
+            [0, 2],
+            [0, -2],
+        ],
+        dtype=jnp.int32,
+    )
+    rng, _melee_rng = jax.random.split(rng)
+    melee_team_rngs = jax.random.split(_melee_rng, num_teams * 2)
+    for t in range(num_teams):
+        should_spawn_melee = jax.random.bernoulli(melee_team_rngs[t * 2], 0.5)
+        chosen_room_slot = jax.random.randint(melee_team_rngs[t * 2 + 1], (), 0, 2)
+        chosen_room_idx = team_room_pairs[t, chosen_room_slot]
+        chosen_room_center = room_centers[chosen_room_idx]
+        room_min = start_room_positions[chosen_room_idx]
+        room_max = room_min + start_room_sizes[chosen_room_idx] - 1
+
+        default_pos = jnp.clip(chosen_room_center + melee_spawn_offsets[0], room_min, room_max)
+        melee_pos = default_pos
+        has_selected_pos = jnp.asarray(False)
+
+        for offset in melee_spawn_offsets:
+            candidate_pos = jnp.clip(chosen_room_center + offset, room_min, room_max)
+            collides_with_player = (player_position == candidate_pos[None, :]).all(axis=1).any()
+            collides_with_snail = jnp.logical_and(
+                passive_mobs.mask[START_LEVEL],
+                (passive_mobs.position[START_LEVEL] == candidate_pos[None, :]).all(axis=1),
+            ).any()
+            collides_with_melee = jnp.logical_and(
+                melee_mobs.mask[START_LEVEL],
+                (melee_mobs.position[START_LEVEL] == candidate_pos[None, :]).all(axis=1),
+            ).any()
+            candidate_block = map[START_LEVEL, candidate_pos[0], candidate_pos[1]]
+            is_walkable = jnp.logical_not(jnp.isin(candidate_block, jnp.array(SOLID_BLOCKS)))
+            no_collision = jnp.logical_and(
+                jnp.logical_not(collides_with_player),
+                jnp.logical_and(
+                    jnp.logical_not(collides_with_snail),
+                    jnp.logical_not(collides_with_melee),
+                ),
+            )
+            can_use_candidate = jnp.logical_and(no_collision, is_walkable)
+            take_candidate = jnp.logical_and(jnp.logical_not(has_selected_pos), can_use_candidate)
+            melee_pos = jnp.where(take_candidate, candidate_pos, melee_pos)
+            has_selected_pos = jnp.logical_or(has_selected_pos, take_candidate)
+
+        should_spawn_melee = jnp.logical_and(should_spawn_melee, has_selected_pos)
+        melee_mobs = melee_mobs.replace(
+            position=melee_mobs.position.at[START_LEVEL, t].set(
+                jnp.where(should_spawn_melee, melee_pos, melee_mobs.position[START_LEVEL, t])
+            ),
+            health=melee_mobs.health.at[START_LEVEL, t].set(
+                jnp.where(should_spawn_melee, melee_health, melee_mobs.health[START_LEVEL, t])
+            ),
+            mask=melee_mobs.mask.at[START_LEVEL, t].set(
+                jnp.where(should_spawn_melee, True, melee_mobs.mask[START_LEVEL, t])
+            ),
+            type_id=melee_mobs.type_id.at[START_LEVEL, t].set(
+                jnp.where(should_spawn_melee, melee_type_id, melee_mobs.type_id[START_LEVEL, t])
+            ),
+        )
+
     # Projectiles
     def _create_projectiles(max_num):
         projectiles = generate_empty_mobs(max_num)
@@ -1000,6 +1075,7 @@ def generate_world(rng, params, static_params):
         log_revive_as_reviver=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         effective_max_timesteps=jnp.asarray(params.max_timesteps, dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),

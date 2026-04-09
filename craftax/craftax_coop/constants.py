@@ -422,7 +422,7 @@ MOB_TYPE_HEALTH_MAPPING = jnp.array(
         # (passive, melee, ranged, -)
         jnp.array([3, 5, 3, 0]),  # Floor 0 (overworld)
         jnp.array([4, 7, 5, 0]),  # Floor 1 (gnomish mines)
-        jnp.array([2, 4.5, 3, 0]),  # Floor 2 (dungeon)
+        jnp.array([2, 3, 3, 0]),  # Floor 2 (dungeon)
         jnp.array([8, 11, 8, 0]),  # Floor 3 (sewers)
         jnp.array([0, 12, 12, 0]),  # Floor 4 (vaults)
         jnp.array([0, 20, 4, 0]),  # Floor 5 (troll mines)

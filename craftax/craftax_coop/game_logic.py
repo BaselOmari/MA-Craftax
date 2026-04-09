@@ -376,7 +376,12 @@ def do_action(rng, state, action, env_params, static_params):
     )
 
     state, did_attack_mob, did_kill_mob = attack_mob(
-        state, doing_action, block_position, get_player_damage_vector(state), is_forager
+        state,
+        doing_action,
+        block_position,
+        get_player_damage_vector(state),
+        is_forager,
+        jnp.arange(state.player_position.shape[0], dtype=jnp.int32),
     )
     
     # Interact with other players (Damage/Revive)
@@ -2238,6 +2243,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectiles.position[None, state.player_level, projectile_index],
             projectile_damage_vector[None, :],
             jnp.array([False]),
+            jnp.array([projectile_owner], dtype=jnp.int32),
         )
         did_attack_mob0 = did_attack_mob0[0]
 
@@ -2250,7 +2256,8 @@ def update_mobs(rng, state, params, env_params, static_params):
             deal_damage,
             proposed_position[None, :],
             projectile_damage_vector[None, :],
-            jnp.array([False])
+            jnp.array([False]),
+            jnp.array([projectile_owner], dtype=jnp.int32),
         )
         did_attack_mob1 = did_attack_mob1[0]
 
@@ -3571,13 +3578,21 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         agent_indices,
     )
 
-    # Trading proximity check using a configurable square radius.
+    # Trading proximity check using a configurable radius shape.
     giver_pos = state.player_position  # (player_count, 2) int32
     receiver_pos = giver_pos[player_trading_to]  # (player_count, 2)
     delta = jnp.abs(giver_pos - receiver_pos)  # (player_count, 2)
-    within_radius = jnp.logical_and(
+    within_square_radius = jnp.logical_and(
         delta[:, 0] <= params.trade_radius,
         delta[:, 1] <= params.trade_radius,
+    )
+    within_circle_radius = (
+        delta.astype(jnp.float32) ** 2
+    ).sum(axis=1) <= jnp.asarray(params.trade_radius, dtype=jnp.float32) ** 2
+    within_radius = jax.lax.select(
+        params.trade_radius_shape == "circle",
+        within_circle_radius,
+        within_square_radius,
     )
 
     is_giving = jnp.logical_and(
@@ -3981,6 +3996,7 @@ def craftax_step(
         log_revive_as_reviver=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
+        log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
     )
 
     # Interrupt action if dead, sleeping or resting
@@ -4098,6 +4114,12 @@ def craftax_step(
         individual_foraging_reward,
         individual_vanilla_reward
     )
+    warrior_melee_kill_bonus = (
+        params.warrior_melee_kill_reward
+        * state.log_melee_kills.astype(individual_reward.dtype)
+        * (state.player_specialization == Specialization.WARRIOR.value).astype(individual_reward.dtype)
+    )
+    individual_reward = individual_reward + warrior_melee_kill_bonus
 
     player_alive = state.player_health > 0.0
 
