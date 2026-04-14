@@ -674,11 +674,16 @@ def do_action(rng, state, action, env_params, static_params):
     )
     is_drinking_water = jnp.logical_and(
         is_drinking_water,
-        is_forager
+        jnp.logical_or(is_forager, is_warrior),
     )
+    drink_gain = jnp.where(
+        is_forager,
+        4,
+        jnp.where(is_warrior, 1, 0),
+    ).astype(state.player_drink.dtype)
     new_drink = jnp.where(
         is_drinking_water,
-        jnp.minimum(get_max_drink(state), state.player_drink + 4),
+        jnp.minimum(get_max_drink(state), state.player_drink + drink_gain),
         state.player_drink,
     )
     new_thirst = jnp.where(
