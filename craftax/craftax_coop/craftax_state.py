@@ -208,12 +208,14 @@ class StaticEnvParams:
     num_teams: int = 2
 
     # Global mob / projectile / plant caps (no longer scaled by player_count)
-    max_melee_mobs: int = 55
-    max_passive_mobs: int = 131
+    max_melee_mobs: int = 40
+    max_passive_mobs: int = 105
     max_growing_plants: int = 60
     max_ranged_mobs: int = 0
     max_mob_projectiles: int = 18
     max_player_projectiles: int = 18
+
+    corridor_width: int = 2
 
     # Rate at which player hunger increases per tick (multiplied with base rate)
     hunger_increase_rate: float = 1.0

@@ -366,6 +366,8 @@ def add_items_from_chest(rng, state, inventory, is_opening_chest):
 
 def do_action(rng, state, action, env_params, static_params):
     is_forager = state.player_specialization == Specialization.FORAGER.value
+    is_warrior = state.player_specialization == Specialization.WARRIOR.value
+    can_eat_passive = jnp.logical_or(is_forager, is_warrior)
 
     block_position = state.player_position + DIRECTIONS[state.player_direction]
     equal_block_placement = (jnp.expand_dims(block_position, axis=1) == jnp.expand_dims(block_position, axis=0)).all(axis=2)
@@ -380,7 +382,7 @@ def do_action(rng, state, action, env_params, static_params):
         doing_action,
         block_position,
         get_player_damage_vector(state),
-        is_forager,
+        can_eat_passive,
         jnp.arange(state.player_position.shape[0], dtype=jnp.int32),
     )
     

@@ -174,6 +174,8 @@ def generate_dungeon(rng, static_params, config):
         jnp.arange(NUM_ROOMS),
     )
 
+    corridor_width = 2
+
     def _add_path(carry, path_index):
         cmap, included_rooms_mask, rng = carry
 
@@ -186,8 +188,13 @@ def generate_dungeon(rng, static_params, config):
         path_sink = room_positions[sink_index]
 
         # Horizontal component
-        entire_row = cmap[path_source[0]]
-        path_indexes = jnp.arange(static_params.map_size[0] + 2 * MAX_ROOM_SIZE)
+        map_height, map_width = cmap.shape
+        horizontal_rows = jax.lax.dynamic_slice(
+            cmap,
+            (path_source[0], 0),
+            (corridor_width, map_width),
+        )
+        path_indexes = jnp.arange(map_width)
         path_indexes = path_indexes - path_source[1]
         horizontal_distance = path_sink[1] - path_source[1]
         path_indexes = path_indexes * jnp.sign(horizontal_distance)
@@ -199,22 +206,28 @@ def generate_dungeon(rng, static_params, config):
             horizontal_mask, jnp.sign(horizontal_distance)
         )
         horizontal_mask = jnp.logical_and(
-            horizontal_mask, entire_row == BlockType.WALL.value
+            horizontal_mask[None, :], horizontal_rows == BlockType.WALL.value
         )
 
-        new_row = (
-            horizontal_mask * BlockType.PATH.value + (1 - horizontal_mask) * entire_row
+        new_rows = jnp.where(
+            horizontal_mask,
+            BlockType.PATH.value,
+            horizontal_rows,
         )
 
         cmap = jax.lax.dynamic_update_slice(
             cmap,
-            jnp.expand_dims(new_row, axis=0),
-            path_source,
+            new_rows,
+            (path_source[0], 0),
         )
 
         # Vertical component
-        entire_col = cmap[:, path_sink[1]]
-        path_indexes = jnp.arange(static_params.map_size[1] + 2 * MAX_ROOM_SIZE)
+        vertical_cols = jax.lax.dynamic_slice(
+            cmap,
+            (0, path_sink[1]),
+            (map_height, corridor_width),
+        )
+        path_indexes = jnp.arange(map_height)
         path_indexes = path_indexes - path_source[0]
         vertical_distance = path_sink[0] - path_source[0]
         path_indexes = path_indexes * jnp.sign(vertical_distance)
@@ -225,17 +238,19 @@ def generate_dungeon(rng, static_params, config):
         vertical_mask = jnp.logical_and(vertical_mask, jnp.sign(vertical_distance))
 
         vertical_mask = jnp.logical_and(
-            vertical_mask, entire_col == BlockType.WALL.value
+            vertical_mask[:, None], vertical_cols == BlockType.WALL.value
         )
 
-        new_col = (
-            vertical_mask * BlockType.PATH.value + (1 - vertical_mask) * entire_col
+        new_cols = jnp.where(
+            vertical_mask,
+            BlockType.PATH.value,
+            vertical_cols,
         )
 
         cmap = jax.lax.dynamic_update_slice(
             cmap,
-            jnp.expand_dims(new_col, axis=-1),
-            path_sink,
+            new_cols,
+            (0, path_sink[1]),
         )
 
         rng, _rng = jax.random.split(rng)

@@ -154,9 +154,18 @@ def attack_mob(state, doing_attack, position, damage_vector, can_eat, attacker_i
         0,
     )
 
+    passive_food_gain = jnp.where(
+        state.player_specialization == Specialization.FORAGER.value,
+        3,
+        jnp.where(
+            state.player_specialization == Specialization.WARRIOR.value,
+            1,
+            0,
+        ),
+    ).astype(state.player_food.dtype)
     new_food = jnp.where(
         jnp.logical_and(did_kill_passive_mob, can_eat),
-        jnp.minimum(get_max_food(state), state.player_food + 3),
+        jnp.minimum(get_max_food(state), state.player_food + passive_food_gain),
         state.player_food,
     )
     new_hunger = jnp.where(

@@ -161,10 +161,14 @@ class CraftaxCoopSymbolicEnv(MultiAgentEnv):
         done_steps = state.timestep.astype(state.effective_max_timesteps.dtype) >= state.effective_max_timesteps
         any_dead_too_long = (
             state.consecutive_dead_steps
-            > jnp.asarray(params.terminate_on_any_death_offset, dtype=state.consecutive_dead_steps.dtype)
+            >= jnp.asarray(params.terminate_on_any_death_offset, dtype=state.consecutive_dead_steps.dtype)
         ).any()
         all_dead = jnp.logical_not(state.player_alive).all()
-        death_terminal = jax.lax.select(params.terminate_on_any_death, any_dead_too_long, all_dead)
+        death_terminal = jax.lax.select(
+            params.terminate_on_any_death,
+            jnp.logical_or(all_dead, any_dead_too_long),
+            all_dead,
+        )
         defeated_boss = has_beaten_boss(state, self.static_env_params)
         is_terminal = jnp.logical_or(death_terminal, done_steps)
         is_terminal = jnp.logical_or(is_terminal, defeated_boss)
