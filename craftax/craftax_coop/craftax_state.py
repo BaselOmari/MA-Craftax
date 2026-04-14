@@ -148,6 +148,11 @@ class EnvState:
     log_revive_as_revived: jnp.ndarray  # (player_count,) 1 if agent was revived this step, else 0
     log_revive_partner_id: jnp.ndarray  # (player_count,) counterpart agent id for revive event, -1 if none
     log_melee_kills: jnp.ndarray  # (player_count,) melee mob kills credited to each agent during the current step
+    log_auto_respawned: jnp.ndarray  # (player_count,) 1 if agent auto-respawned this step, else 0
+
+    # Per-player bounds of the player's assigned starter room, used by enable_auto_respawning.
+    player_spawn_room_min: jnp.ndarray  # (player_count, 2) top-left (row, col) of the player's own start room
+    player_spawn_room_max: jnp.ndarray  # (player_count, 2) bottom-right (row, col) inclusive of the player's own start room
 
     # Episode length cap (dynamically set by training loop).
     # Keep this float32 so reset/step states stay dtype-consistent under JAX auto-reset.
@@ -186,6 +191,8 @@ class EnvParams:
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
     dead_self_penalty_weight: float = 0.0  # Per-agent penalty applied only to dead agents after shared reward aggregation.
     warrior_melee_kill_reward: float = 0.0  # Bonus given to warriors per credited melee-mob kill.
+    enable_auto_respawning: bool = False  # If True, auto-revive an agent that died inside its own spawn room after auto_respawn_steps.
+    auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15

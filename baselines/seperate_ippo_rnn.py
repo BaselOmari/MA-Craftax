@@ -1087,7 +1087,7 @@ def make_train(config, env):
                              'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
                              'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                              'trade_give_partner_id', 'trade_receive_partner_id',
-                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id',
+                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
                              'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                              ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                    for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1109,7 +1109,7 @@ def make_train(config, env):
                                       'num_ranged_nearby',
                                       'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                                       'trade_give_partner_id', 'trade_receive_partner_id',
-                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id',
+                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
                                       'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                                       ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                             for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1462,6 +1462,8 @@ def single_run(config):
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
     dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
     warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
+    enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
+    auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
     trade_radius = int(config.get("TRADE_RADIUS", 18))
     trade_radius_shape = str(config.get("TRADE_RADIUS_SHAPE", "square")).lower()
     shared_reward = config.get("SHARED_REWARD", True)
@@ -1480,6 +1482,8 @@ def single_run(config):
         "all_team_alive_bonus": all_team_alive_bonus,
         "dead_self_penalty_weight": dead_self_penalty_weight,
         "warrior_melee_kill_reward": warrior_melee_kill_reward,
+        "enable_auto_respawning": enable_auto_respawning,
+        "auto_respawn_steps": auto_respawn_steps,
         "trade_radius": trade_radius,
         "trade_radius_shape": trade_radius_shape,
         "shared_reward": shared_reward,

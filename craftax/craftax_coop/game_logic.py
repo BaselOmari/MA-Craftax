@@ -4004,6 +4004,7 @@ def craftax_step(
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
         log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_auto_respawned=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
     )
 
     # Interrupt action if dead, sleeping or resting
@@ -4183,10 +4184,66 @@ def craftax_step(
         state.consecutive_dead_steps + 1,
     )
 
+    # Auto-respawn: if an agent died inside its own assigned spawn room and stayed
+    # dead for auto_respawn_steps, revive it in place with full stats.
+    pos = state.player_position  # (player_count, 2)
+    in_own_spawn_room = jnp.logical_and(
+        (pos >= state.player_spawn_room_min).all(axis=-1),
+        (pos <= state.player_spawn_room_max).all(axis=-1),
+    )
+    should_auto_respawn = jnp.logical_and(
+        params.enable_auto_respawning,
+        jnp.logical_and(
+            jnp.logical_not(player_alive),
+            jnp.logical_and(
+                in_own_spawn_room,
+                new_consecutive_dead_steps >= params.auto_respawn_steps,
+            ),
+        ),
+    )
+
+    new_player_health = jnp.where(
+        should_auto_respawn,
+        get_max_health(state).astype(state.player_health.dtype),
+        state.player_health,
+    )
+    new_player_food = jnp.where(
+        should_auto_respawn,
+        get_max_food(state).astype(state.player_food.dtype),
+        state.player_food,
+    )
+    new_player_drink = jnp.where(
+        should_auto_respawn,
+        get_max_drink(state).astype(state.player_drink.dtype),
+        state.player_drink,
+    )
+    new_player_energy = jnp.where(
+        should_auto_respawn,
+        get_max_energy(state).astype(state.player_energy.dtype),
+        state.player_energy,
+    )
+    new_player_hunger = jnp.where(should_auto_respawn, 0.0, state.player_hunger)
+    new_player_thirst = jnp.where(should_auto_respawn, 0.0, state.player_thirst)
+    new_player_fatigue = jnp.where(should_auto_respawn, 0.0, state.player_fatigue)
+    player_alive = jnp.logical_or(player_alive, should_auto_respawn)
+    new_consecutive_dead_steps = jnp.where(
+        should_auto_respawn,
+        jnp.zeros_like(new_consecutive_dead_steps),
+        new_consecutive_dead_steps,
+    )
+
     rng, _rng = jax.random.split(rng)
 
     state = state.replace(
         player_alive=player_alive,
+        player_health=new_player_health,
+        player_food=new_player_food,
+        player_drink=new_player_drink,
+        player_energy=new_player_energy,
+        player_hunger=new_player_hunger,
+        player_thirst=new_player_thirst,
+        player_fatigue=new_player_fatigue,
+        log_auto_respawned=should_auto_respawn.astype(jnp.int32),
         timestep=state.timestep + 1,
         light_level=calculate_light_level(state.timestep + 1, params),
         state_rng=_rng,

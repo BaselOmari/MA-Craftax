@@ -101,4 +101,5 @@ def compute_step_event_info(state: EnvState):
         "revive_as_revived": state.log_revive_as_revived.astype(jnp.float32),
         "revive_partner_id": state.log_revive_partner_id.astype(jnp.float32),
         "melee_kills": state.log_melee_kills.astype(jnp.float32),
+        "auto_respawned": state.log_auto_respawned.astype(jnp.float32),
     }

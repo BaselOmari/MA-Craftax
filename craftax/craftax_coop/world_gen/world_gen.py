@@ -736,6 +736,10 @@ def generate_world(rng, params, static_params):
     player_room_pos      = start_room_positions[player_room_idx]                # (player_count, 2)
     player_room_sz       = start_room_sizes[player_room_idx]                    # (player_count, 2)
 
+    # Per-player bounds of the player's own assigned start room, used for auto-respawn checks.
+    player_spawn_room_min = player_room_pos
+    player_spawn_room_max = player_room_pos + player_room_sz - 1
+
     slot_indices = within_team_slot % spawn_offsets.shape[0]
     raw_player_position  = player_room_center + spawn_offsets[slot_indices]
     room_min = player_room_pos
@@ -1091,6 +1095,9 @@ def generate_world(rng, params, static_params):
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
         log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_auto_respawned=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        player_spawn_room_min=player_spawn_room_min.astype(jnp.int32),
+        player_spawn_room_max=player_spawn_room_max.astype(jnp.int32),
         effective_max_timesteps=jnp.asarray(params.max_timesteps, dtype=jnp.float32),
         state_rng=_rng,
         timestep=jnp.asarray(0, dtype=jnp.int32),
