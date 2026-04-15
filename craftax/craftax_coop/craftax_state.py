@@ -190,9 +190,12 @@ class EnvParams:
     teammate_alive_bonus: float = 0.0  # Shared bonus per additional alive team member beyond the first alive member.
     all_team_alive_bonus: float = 0.0  # Bonus added to shared_reward when all members of an agent's team are alive.
     dead_self_penalty_weight: float = 0.0  # Per-agent penalty applied only to dead agents after shared reward aggregation.
+    one_time_death_penalty_shared: float = 0.0  # One-time penalty per death, distributed to the whole team via shared reward.
+    one_time_death_penalty_individual: float = 0.0  # One-time penalty per death, applied only to the dead agent (in both reward modes).
     warrior_melee_kill_reward: float = 0.0  # Bonus given to warriors per credited melee-mob kill.
-    enable_auto_respawning: bool = False  # If True, auto-revive an agent that died inside its own spawn room after auto_respawn_steps.
+    enable_auto_respawning: bool = False  # If True, auto-revive dead agents after auto_respawn_steps.
     auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
+    restrict_auto_respawning_to_spawn_room: bool = True  # If True, auto-respawn only triggers when the dead agent is inside its own starter room.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15

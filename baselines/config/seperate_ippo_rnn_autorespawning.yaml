@@ -22,16 +22,16 @@ ONE_TIME_DEATH_PENALTY_SHARED: 0.0
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 0.0
 WARRIOR_MELEE_KILL_REWARD: 5
 
-ENABLE_AUTO_RESPAWNING: false
+ENABLE_AUTO_RESPAWNING: true
 AUTO_RESPAWN_STEPS: 50
 RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM: true
 
 TRADE_RADIUS: 18
 TRADE_RADIUS_SHAPE: "circle"  # "square" or "circle"
 
-EARLY_EPISODE_CAP: 3000          # Max episode length during early training (0 = disabled)
-EARLY_EPISODE_CAP_UNTIL: 25000   # Training update step until which the cap applies
-TERMINATE_ON_ANY_DEATH: true
+EARLY_EPISODE_CAP: 20000          # Max episode length during early training (0 = disabled)
+EARLY_EPISODE_CAP_UNTIL: 50000   # Training update step until which the cap applies
+TERMINATE_ON_ANY_DEATH: false
 TERMINATE_ON_ANY_DEATH_OFFSET: 800
 
 NUM_TEAMS: 1

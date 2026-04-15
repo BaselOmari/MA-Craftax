@@ -4156,7 +4156,24 @@ def craftax_step(
     # Apply a self-only penalty to dead agents after reward sharing so it does not punish teammates.
     dead_self_penalty = params.dead_self_penalty_weight * jnp.logical_not(player_alive).astype(shared_reward.dtype)
     shared_reward = shared_reward - dead_self_penalty
-    
+
+    # One-time death penalties: detect alive->dead transition since last step.
+    just_died = jnp.logical_and(state.player_alive, jnp.logical_not(player_alive))
+
+    # Shared variant: each team member pays the penalty once per teammate that died this step.
+    team_just_died_count = jnp.where(team_mask, just_died[None, :], False).sum(axis=1)
+    shared_reward = shared_reward - (
+        params.one_time_death_penalty_shared
+        * team_just_died_count.astype(shared_reward.dtype)
+    )
+
+    # Individual variant: only the dead agent gets hit (applied to shared path too so dead agent is penalized regardless of sharing mode).
+    one_time_death_penalty_self = (
+        params.one_time_death_penalty_individual
+        * just_died.astype(shared_reward.dtype)
+    )
+    shared_reward = shared_reward - one_time_death_penalty_self
+
     # Old behavior (global sharing across all agents):
     # shared_reward = individual_reward.sum().repeat(static_params.player_count)
 
@@ -4169,6 +4186,7 @@ def craftax_step(
     individual_reward_shaped = individual_reward_shaped + params.all_team_alive_bonus * team_all_alive.astype(individual_reward_shaped.dtype)
     dead_self_penalty_ind = params.dead_self_penalty_weight * jnp.logical_not(player_alive).astype(individual_reward_shaped.dtype)
     individual_reward_shaped = individual_reward_shaped - dead_self_penalty_ind
+    individual_reward_shaped = individual_reward_shaped - one_time_death_penalty_self.astype(individual_reward_shaped.dtype)
 
     reward = jax.lax.select(
         params.shared_reward,
@@ -4184,20 +4202,31 @@ def craftax_step(
         state.consecutive_dead_steps + 1,
     )
 
-    # Auto-respawn: if an agent died inside its own assigned spawn room and stayed
-    # dead for auto_respawn_steps, revive it in place with full stats.
+    # Auto-respawn: if an agent stayed dead for auto_respawn_steps, revive it in
+    # place with full stats. If restrict_auto_respawning_to_spawn_room is True,
+    # the agent must be inside its own assigned spawn room for the auto-respawn
+    # to trigger.
     pos = state.player_position  # (player_count, 2)
     in_own_spawn_room = jnp.logical_and(
         (pos >= state.player_spawn_room_min).all(axis=-1),
         (pos <= state.player_spawn_room_max).all(axis=-1),
     )
+    location_ok = jnp.where(
+        params.restrict_auto_respawning_to_spawn_room,
+        in_own_spawn_room,
+        jnp.ones_like(in_own_spawn_room),
+    )
+    all_dead_before_auto_respawn = jnp.logical_not(player_alive).all()
     should_auto_respawn = jnp.logical_and(
         params.enable_auto_respawning,
         jnp.logical_and(
-            jnp.logical_not(player_alive),
+            jnp.logical_not(all_dead_before_auto_respawn),
             jnp.logical_and(
-                in_own_spawn_room,
-                new_consecutive_dead_steps >= params.auto_respawn_steps,
+                jnp.logical_not(player_alive),
+                jnp.logical_and(
+                    location_ok,
+                    new_consecutive_dead_steps >= params.auto_respawn_steps,
+                ),
             ),
         ),
     )

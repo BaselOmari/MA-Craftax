@@ -1461,9 +1461,12 @@ def single_run(config):
     teammate_alive_bonus = config.get("TEAMMATE_ALIVE_BONUS", 0.0)
     all_team_alive_bonus = config.get("ALL_TEAM_ALIVE_BONUS", 0.0)
     dead_self_penalty_weight = config.get("DEAD_SELF_PENALTY_WEIGHT", 0.0)
+    one_time_death_penalty_shared = config.get("ONE_TIME_DEATH_PENALTY_SHARED", 0.0)
+    one_time_death_penalty_individual = config.get("ONE_TIME_DEATH_PENALTY_INDIVIDUAL", 0.0)
     warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
+    restrict_auto_respawning_to_spawn_room = config.get("RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM", True)
     trade_radius = int(config.get("TRADE_RADIUS", 18))
     trade_radius_shape = str(config.get("TRADE_RADIUS_SHAPE", "square")).lower()
     shared_reward = config.get("SHARED_REWARD", True)
@@ -1481,9 +1484,12 @@ def single_run(config):
         "teammate_alive_bonus": teammate_alive_bonus,
         "all_team_alive_bonus": all_team_alive_bonus,
         "dead_self_penalty_weight": dead_self_penalty_weight,
+        "one_time_death_penalty_shared": one_time_death_penalty_shared,
+        "one_time_death_penalty_individual": one_time_death_penalty_individual,
         "warrior_melee_kill_reward": warrior_melee_kill_reward,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
+        "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,
         "trade_radius": trade_radius,
         "trade_radius_shape": trade_radius_shape,
         "shared_reward": shared_reward,
