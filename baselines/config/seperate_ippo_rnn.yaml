@@ -2,8 +2,8 @@
 WANDB_MODE: "online" # Change to "online" for logging and include appropriate ENTITY and PROJECT arguments
 ENTITY: ""
 PROJECT: ""
-RUN_NAME: "IPPO - new_log"
-OUTPUT_DIR: ""  # Example: "run_xy" Optional local artifact directory. Empty => use ./<wandb_run_id>
+RUN_NAME: "Seperate-IPPO-RNN"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
+OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
 
 # Environment configuration
 

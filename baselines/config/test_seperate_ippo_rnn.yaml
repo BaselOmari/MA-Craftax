@@ -2,8 +2,8 @@
 WANDB_MODE: "online" # Change to "online" for logging and include appropriate ENTITY and PROJECT arguments
 ENTITY: ""
 PROJECT: ""
-RUN_NAME: "Separate IPPO - Test POC"
-OUTPUT_DIR: ""  # Optional local artifact directory. Empty => use ./<wandb_run_id>
+RUN_NAME: "Test-Seperate-IPPO-RNN"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
+OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
 
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"

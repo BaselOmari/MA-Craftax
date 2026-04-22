@@ -16,7 +16,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 import argparse
+import datetime
 import functools
+import tempfile
 import yaml
 from typing import Sequence, NamedTuple, Dict
 
@@ -159,6 +161,15 @@ def unbatchify(x: jnp.ndarray, agent_list):
 # Training Function
 # ===========================
 def make_train(config, env):
+    run_output_dir = None
+
+    def sanitize_path_component(value: str, fallback: str = "run") -> str:
+        cleaned = "".join(
+            ch if ch.isalnum() or ch in {"-", "_"} else "_"
+            for ch in str(value).strip()
+        ).strip("._-")
+        return cleaned or fallback
+
     if config["NUM_MINIBATCHES"] <= 0:
         raise ValueError(
             f"NUM_MINIBATCHES must be >= 1, got {config['NUM_MINIBATCHES']}."
@@ -203,17 +214,27 @@ def make_train(config, env):
     _video_max_length = int(config.get("MAX_VIDEO_LENGTH", -1))
 
     def get_run_output_dir():
+        nonlocal run_output_dir
+        if run_output_dir is not None:
+            return run_output_dir
+
         configured_output_dir = config.get("OUTPUT_DIR", "")
-        if configured_output_dir:
-            return configured_output_dir
-        return os.path.join("./", wandb.run.id)
+        output_root = os.path.expanduser(configured_output_dir) if configured_output_dir else "."
+        run_group_dir = sanitize_path_component(config.get("RUN_NAME", "run"), fallback="run")
+        run_instance_dir = "{}_{}".format(
+            datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
+            wandb.run.id,
+        )
+        run_output_dir = os.path.join(output_root, run_group_dir, run_instance_dir)
+        print(f"Run artifacts will be written to: {run_output_dir}")
+        return run_output_dir
 
     # Two env references to avoid VideoPlotWrapper overhead during training:
     # env_train: LogWrapper only — used for training steps (no mob distance calculations)
     # env_log:   LogWrapper + VideoPlotWrapper — used for CSV logging steps (adds health, food, mob distances etc.)
     # Both share the same state structure (VideoPlotWrapper is a pass-through for state).
     env_train = LogWrapper(env)
-    env_log = VideoPlotWrapper(env_train, './output/', 256, False)
+    env_log = VideoPlotWrapper(env_train, os.path.join(get_run_output_dir(), 'debug_output'), 256, False)
     env = env_log  # default reference for property access (agents, num_agents, action_space, etc.)
 
     # Auxiliary loss configuration
@@ -1121,38 +1142,45 @@ def make_train(config, env):
 
                 run_out_path = get_run_output_dir()
                 os.makedirs(run_out_path, exist_ok=True)
+                temp_dir = os.path.join(run_out_path, '.tmp')
+                os.makedirs(temp_dir, exist_ok=True)
                 # Assemble header for the scalar file(s)
                 scalar_file_header = 'action'
                 for key in header_field_names:
                     scalar_file_header += ',' + key
 
-                # We save to temp files and then append to the target file since numpy apparently cannot write files in append mode for some reason
+                # Keep temp files local to this run so different runs can share an
+                # OUTPUT_DIR root without colliding.
                 for i in range(logging_threads):
-                    temp_filename = os.path.join(run_out_path, 'temp.csv')
-
                     # Only save hidden states if enabled (they are very large)
                     if hstate is not None:
                         out_filename_hstates = os.path.join(run_out_path, 'hstates_{}_{}_{}.csv'.format(increment, agent_n, i))
-                        np.savetxt(temp_filename,
-                                   hstate[:, i, :], delimiter=',')
-                        temp_file = open(temp_filename, 'r')
-                        out_file_hstates = open(out_filename_hstates, 'a+')
-                        out_file_hstates.write(temp_file.read())
-                        out_file_hstates.close()
-                        temp_file.close()
+                        with tempfile.NamedTemporaryFile(mode='w+', dir=temp_dir, suffix='.csv', delete=False) as temp_handle:
+                            temp_filename = temp_handle.name
+                        try:
+                            np.savetxt(temp_filename,
+                                       hstate[:, i, :], delimiter=',')
+                            with open(temp_filename, 'r', encoding='utf-8') as temp_file, open(out_filename_hstates, 'a+', encoding='utf-8') as out_file_hstates:
+                                out_file_hstates.write(temp_file.read())
+                        finally:
+                            if os.path.exists(temp_filename):
+                                os.remove(temp_filename)
                         print('Writing log file', out_filename_hstates)
 
                     # Always save scalars
                     out_filename_scalars = os.path.join(run_out_path, 'scalars_{}_{}_{}.csv'.format(increment, agent_n, i))
-                    np.savetxt(temp_filename,
-                               scalars[:, i, :], delimiter=',', fmt='%f',
-                               header=scalar_file_header
-                               )
-                    temp_file = open(temp_filename, 'r')
-                    out_file_scalars = open(out_filename_scalars, 'a+')
-                    out_file_scalars.write(temp_file.read())
-                    temp_file.close()
-                    out_file_scalars.close()
+                    with tempfile.NamedTemporaryFile(mode='w+', dir=temp_dir, suffix='.csv', delete=False) as temp_handle:
+                        temp_filename = temp_handle.name
+                    try:
+                        np.savetxt(temp_filename,
+                                   scalars[:, i, :], delimiter=',', fmt='%f',
+                                   header=scalar_file_header
+                                   )
+                        with open(temp_filename, 'r', encoding='utf-8') as temp_file, open(out_filename_scalars, 'a+', encoding='utf-8') as out_file_scalars:
+                            out_file_scalars.write(temp_file.read())
+                    finally:
+                        if os.path.exists(temp_filename):
+                            os.remove(temp_filename)
                     print('Writing log file', out_filename_scalars)
 
             # Add the specified field to the logging array
