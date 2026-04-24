@@ -129,6 +129,7 @@ class EnvState:
     revive_cooldown_until: jnp.ndarray  # (player_count,) earliest timestep when each agent can be revived again
     team_kills: jnp.ndarray  # (num_teams,) array: kills against other teams, indexed by killer's team
     walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
+    sum_distance_to_spawn: jnp.ndarray  # (player_count,) sum of per-step Manhattan distance from spawn; divide by timestep for episode average
     damage_taken_melee: jnp.ndarray  # (player_count,) cumulative mob melee damage taken
     damage_taken_health_food: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty food
     damage_taken_health_drink: jnp.ndarray  # (player_count,) cumulative health damage attributed to empty drink

@@ -80,6 +80,12 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
     # Per-agent metrics
     info["Reward/individual_reward"] = state.individual_reward_return.astype(jnp.float32)
     info["Movement/walking_distance"] = state.walking_distance.astype(jnp.float32)
+    # Episode-average Manhattan distance from each agent to its own spawn position.
+    # sum_distance_to_spawn accumulates per-step |pos - spawn| inside craftax_step;
+    # dividing by timestep (steps elapsed in current episode) gives the running mean,
+    # so reading this at episode end (done=True) yields the average over the episode.
+    ep_steps = jnp.maximum(state.timestep.astype(jnp.float32), 1.0)
+    info["Movement/distance_to_spawn"] = (state.sum_distance_to_spawn / ep_steps).astype(jnp.float32)
     info["Combat/damage_taken_melee"] = state.damage_taken_melee.astype(jnp.float32)
     info["Combat/damage_taken_health_food"] = state.damage_taken_health_food.astype(jnp.float32)
     info["Combat/damage_taken_health_drink"] = state.damage_taken_health_drink.astype(jnp.float32)

@@ -4263,6 +4263,12 @@ def craftax_step(
 
     rng, _rng = jax.random.split(rng)
 
+    # Accumulate per-step Manhattan distance to spawn (for episode-average metric).
+    current_distance_to_spawn = jnp.abs(
+        state.player_position - state.player_spawn_position
+    ).sum(axis=-1).astype(jnp.float32)
+    new_sum_distance_to_spawn = state.sum_distance_to_spawn + current_distance_to_spawn
+
     state = state.replace(
         player_alive=player_alive,
         player_health=new_player_health,
@@ -4278,6 +4284,7 @@ def craftax_step(
         state_rng=_rng,
         individual_reward_return=new_individual_reward_return,
         consecutive_dead_steps=new_consecutive_dead_steps,
+        sum_distance_to_spawn=new_sum_distance_to_spawn,
     )
 
     return state, reward, individual_reward_shaped

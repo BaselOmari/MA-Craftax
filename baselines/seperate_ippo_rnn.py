@@ -990,6 +990,16 @@ def make_train(config, env):
                         to_log["overview/walking_distance"] = np.mean(all_walk)
                         to_log["overview/movement"] = np.mean(all_walk)
 
+                    # Per-agent and overview distance to spawn (mean over returned episodes)
+                    all_spawn_dists = []
+                    for ai in range(num_agents):
+                        v = _agent_mean("Movement/distance_to_spawn", ai)
+                        if v is not None:
+                            to_log[f"agent_{ai}/distance_to_spawn"] = v
+                            all_spawn_dists.append(v)
+                    if all_spawn_dists:
+                        to_log["overview/distance_to_spawn"] = np.mean(all_spawn_dists)
+
                     combat_damage_keys = [
                         "damage_taken_melee",
                         "damage_taken_health_food",
@@ -1035,6 +1045,11 @@ def make_train(config, env):
                         v = _team_mean("Movement/walking_distance", ti)
                         if v is not None:
                             to_log[f"{tp}/walking_distance"] = v
+
+                        # distance_to_spawn per team
+                        v = _team_mean("Movement/distance_to_spawn", ti)
+                        if v is not None:
+                            to_log[f"{tp}/distance_to_spawn"] = v
 
                         # combat: damage taken (aggregated over team members)
                         for dk in combat_damage_keys:

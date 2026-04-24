@@ -1130,6 +1130,7 @@ def generate_world(rng, params, static_params):
         revive_cooldown_until=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         team_kills=jnp.zeros(static_params.num_teams, dtype=jnp.int32),
         walking_distance=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
+        sum_distance_to_spawn=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         damage_taken_melee=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         damage_taken_health_food=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         damage_taken_health_drink=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
