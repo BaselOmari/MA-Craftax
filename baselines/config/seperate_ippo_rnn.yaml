@@ -2,7 +2,7 @@
 WANDB_MODE: "online" # Change to "online" for logging and include appropriate ENTITY and PROJECT arguments
 ENTITY: ""
 PROJECT: ""
-RUN_NAME: "Seperate-IPPO-RNN"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
+RUN_NAME: "RUN-Seperate-IPPO-RNN"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
 OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
 
 # Environment configuration
@@ -11,7 +11,7 @@ ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
-ACTION_MASK_WHILE_DEAD: false
+ACTION_MASK_WHILE_DEAD: true
 
 SHARED_REWARD: true
 
@@ -30,8 +30,8 @@ TRADE_RADIUS: 18
 TRADE_RADIUS_SHAPE: "circle"  # "square" or "circle"
 
 EARLY_EPISODE_CAP: 3000          # Max episode length during early training (0 = disabled)
-EARLY_EPISODE_CAP_UNTIL: 25000   # Training update step until which the cap applies
-TERMINATE_ON_ANY_DEATH: true
+EARLY_EPISODE_CAP_UNTIL: 30000   # Training update step until which the cap applies
+TERMINATE_ON_ANY_DEATH: false
 TERMINATE_ON_ANY_DEATH_OFFSET: 800
 
 NUM_TEAMS: 1
