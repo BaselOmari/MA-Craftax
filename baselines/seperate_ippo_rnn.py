@@ -143,6 +143,22 @@ class TrainBatch(NamedTuple):
     obs: jnp.ndarray
     deltas_to_start: jnp.ndarray
 
+class LossAux(NamedTuple):
+    """Auxiliary outputs from _loss_fn — passed through has_aux=True, only used for logging.
+    Adding / reordering fields here won't silently misalign wandb metrics."""
+    value_loss: jnp.ndarray
+    loss_actor: jnp.ndarray
+    entropy: jnp.ndarray
+    ratio: jnp.ndarray
+    approx_kl: jnp.ndarray
+    clip_frac: jnp.ndarray
+    aux_loss: jnp.ndarray
+    total_loss_per_agent: jnp.ndarray
+    value_loss_per_agent: jnp.ndarray
+    loss_actor_per_agent: jnp.ndarray
+    entropy_per_agent: jnp.ndarray
+    aux_loss_per_agent: jnp.ndarray
+
 def batchify(x: dict, agent_list):
     """Stack agent observations, preserving agent dimension.
     
@@ -386,6 +402,17 @@ def make_train(config, env):
         init_done = {a: jnp.zeros((config["NUM_ENVS"],), dtype=bool) for a in env.agents}
         init_done["__all__"] = jnp.zeros((config["NUM_ENVS"],), dtype=bool)
 
+        # Override effective_max_timesteps in every vmapped env_state. Must be
+        # re-applied after env.step, because world_gen resets the cap to its
+        # default value whenever an episode terminates — so a one-shot patch
+        # before the rollout scan only affects episodes already running at the
+        # start of the rollout.
+        def _patch_episode_cap(env_state, effective_cap):
+            current_caps = env_state.env_state.effective_max_timesteps
+            patched_caps = jnp.full_like(current_caps, effective_cap)
+            patched_inner = env_state.env_state.replace(effective_max_timesteps=patched_caps)
+            return env_state.replace(env_state=patched_inner)
+
         # TRAIN LOOP
         # detailed_logging: when True, extra per-step fields (hidden_state, entropy,
         # log_prob, deltas, etc.) are added to info for CSV logging.  When False
@@ -394,7 +421,7 @@ def make_train(config, env):
         # Use functools.partial to set the flag at compile time so JAX can
         # eliminate the dead code path entirely.
 
-        def _env_step(runner_state, unused, detailed_logging=False):
+        def _env_step(runner_state, unused, detailed_logging=False, effective_cap=None):
             train_state, env_state, last_obs, last_done, hstate, rng = runner_state
 
             # SELECT ACTION
@@ -450,6 +477,11 @@ def make_train(config, env):
             obsv, env_state, reward, done, info = jax.vmap(
                 step_fn, in_axes=(0, 0, 0)
             )(rng_step, env_state, env_act)
+
+            # Re-apply the episode cap: env.step may have reset an episode and
+            # restored effective_max_timesteps to the default.
+            if effective_cap is not None:
+                env_state = _patch_episode_cap(env_state, effective_cap)
 
             done_batch = batchify(done, env.agents)  # (num_agents, num_envs)
             reward_batch = batchify(reward, env.agents)  # (num_agents, num_envs)
@@ -532,29 +564,40 @@ def make_train(config, env):
         _early_episode_cap_until = config.get("EARLY_EPISODE_CAP_UNTIL", 0)
         _default_max_timesteps = env.default_params.max_timesteps
 
-        def _update_step(update_runner_state, unused):
-            runner_state, update_steps = update_runner_state
-
-            # Dynamically cap episode length during early training
+        def _get_effective_episode_cap(update_steps):
             if _early_episode_cap > 0 and _early_episode_cap_until > 0:
-                effective_cap = jax.lax.select(
+                return jax.lax.select(
                     update_steps < _early_episode_cap_until,
                     jnp.asarray(_early_episode_cap, dtype=jnp.float32),
                     jnp.asarray(_default_max_timesteps, dtype=jnp.float32),
                 )
-                train_state, env_state, last_obs, last_done, hstate, rng = runner_state
-                # env_state is batched over NUM_ENVS here, so broadcast the scalar cap
-                # to keep the state leaf shape consistent for the next vmap(env.step).
-                current_caps = env_state.env_state.effective_max_timesteps
-                patched_caps = jnp.full_like(current_caps, effective_cap)
-                patched_inner = env_state.env_state.replace(effective_max_timesteps=patched_caps)
-                env_state = env_state.replace(env_state=patched_inner)
-                runner_state = (train_state, env_state, last_obs, last_done, hstate, rng)
+            return None
+
+        def _apply_episode_cap_to_runner_state(runner_state, effective_cap):
+            if effective_cap is None:
+                return runner_state
+            train_state, env_state, last_obs, last_done, hstate, rng = runner_state
+            env_state = _patch_episode_cap(env_state, effective_cap)
+            return (train_state, env_state, last_obs, last_done, hstate, rng)
+
+        def _update_step(update_runner_state, unused):
+            runner_state, update_steps = update_runner_state
+
+            # Dynamically cap episode length during early training. The cap must
+            # be passed into _env_step and re-applied after every env.step —
+            # see _patch_episode_cap for why a single pre-rollout patch is not
+            # enough.
+            effective_cap = _get_effective_episode_cap(update_steps)
+            if effective_cap is not None:
+                runner_state = _apply_episode_cap_to_runner_state(runner_state, effective_cap)
+                scan_step_fn = functools.partial(_env_step, effective_cap=effective_cap)
+            else:
+                scan_step_fn = _env_step
 
             # Save initial hidden state BEFORE rollout for PPO rerun
             initial_hstate = runner_state[4]  # hstate before rollout
             runner_state, traj_batch = jax.lax.scan(
-                _env_step, runner_state, None, config["NUM_STEPS"]
+                scan_step_fn, runner_state, None, config["NUM_STEPS"]
             )
 
             # CALCULATE ADVANTAGE
@@ -718,9 +761,19 @@ def make_train(config, env):
                         total_loss = total_loss_per_agent.mean()  # scalar for gradient
                         
                         # Return both scalar losses (for gradient) and per-agent losses (for logging)
-                        return total_loss, (
-                            value_loss, loss_actor, entropy, ratio, approx_kl, clip_frac, aux_loss,
-                            total_loss_per_agent, value_loss_per_agent, loss_actor_per_agent, entropy_per_agent, aux_loss_per_agent
+                        return total_loss, LossAux(
+                            value_loss=value_loss,
+                            loss_actor=loss_actor,
+                            entropy=entropy,
+                            ratio=ratio,
+                            approx_kl=approx_kl,
+                            clip_frac=clip_frac,
+                            aux_loss=aux_loss,
+                            total_loss_per_agent=total_loss_per_agent,
+                            value_loss_per_agent=value_loss_per_agent,
+                            loss_actor_per_agent=loss_actor_per_agent,
+                            entropy_per_agent=entropy_per_agent,
+                            aux_loss_per_agent=aux_loss_per_agent,
                         )
 
                     grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
@@ -837,36 +890,37 @@ def make_train(config, env):
             train_state = update_state[0]
             
             # traj_info is a FrozenDict from LogWrapper - create new dict to avoid mutation issues
+            loss_aux = loss_info[1]  # LossAux with fields stacked (num_epochs, num_minibatches, ...)
             # ratio_0: get before mean reduction (like original)
-            ratio_0 = loss_info[1][3].at[0, 0].get().mean()
-            
-            # Per-agent losses are now returned directly from loss_fn
-            # loss_info[1][7:12] are the per-agent values: total, value, actor, entropy, aux
+            ratio_0 = loss_aux.ratio.at[0, 0].get().mean()
+
+            # Per-agent losses are returned directly from loss_fn.
             # Shape after scan: (num_epochs, num_minibatches, num_agents)
             # Mean over epochs and minibatches to get (num_agents,)
-            total_loss_per_agent = loss_info[1][7].mean(axis=(0, 1))    # (num_agents,)
-            value_loss_per_agent = loss_info[1][8].mean(axis=(0, 1))    # (num_agents,)
-            actor_loss_per_agent = loss_info[1][9].mean(axis=(0, 1))    # (num_agents,)
-            entropy_per_agent = loss_info[1][10].mean(axis=(0, 1))       # (num_agents,)
-            aux_loss_per_agent = loss_info[1][11].mean(axis=(0, 1))     # (num_agents,)
-            
+            total_loss_per_agent = loss_aux.total_loss_per_agent.mean(axis=(0, 1))
+            value_loss_per_agent = loss_aux.value_loss_per_agent.mean(axis=(0, 1))
+            actor_loss_per_agent = loss_aux.loss_actor_per_agent.mean(axis=(0, 1))
+            entropy_per_agent = loss_aux.entropy_per_agent.mean(axis=(0, 1))
+            aux_loss_per_agent = loss_aux.aux_loss_per_agent.mean(axis=(0, 1))
+
             # Global mean for backward compatibility
             loss_info_mean = jax.tree.map(lambda x: x.mean(), loss_info)
-            
+            loss_aux_mean = loss_info_mean[1]
+
             # Create new metric dict (don't mutate FrozenDict from LogWrapper)
             metric = {
                 **dict(traj_info),  # Convert FrozenDict to regular dict
                 "update_steps": update_steps,
                 "loss": {
                     "total_loss": loss_info_mean[0],
-                    "value_loss": loss_info_mean[1][0],
-                    "actor_loss": loss_info_mean[1][1],
-                    "entropy": loss_info_mean[1][2],
-                    "ratio": loss_info_mean[1][3],
+                    "value_loss": loss_aux_mean.value_loss,
+                    "actor_loss": loss_aux_mean.loss_actor,
+                    "entropy": loss_aux_mean.entropy,
+                    "ratio": loss_aux_mean.ratio,
                     "ratio_0": ratio_0,
-                    "approx_kl": loss_info_mean[1][4],
-                    "clip_frac": loss_info_mean[1][5],
-                    "aux_loss": loss_info_mean[1][6],
+                    "approx_kl": loss_aux_mean.approx_kl,
+                    "clip_frac": loss_aux_mean.clip_frac,
+                    "aux_loss": loss_aux_mean.aux_loss,
                 },
                 "loss_per_agent": {
                     "total_loss": total_loss_per_agent,      # (num_agents,)
@@ -1084,11 +1138,15 @@ def make_train(config, env):
 
         # Do one "step" of logging, writing the result to a file.
         # Several steps can be run in series using --logging_steps_per_viz to do long rollouts without hitting memory limits
-        def _logging_step(carry, unused, logging_threads, update_step):
+        def _logging_step(carry, unused, logging_threads, update_step, effective_cap=None):
             runner_state, episode_count = carry
+            runner_state = _apply_episode_cap_to_runner_state(runner_state, effective_cap)
             # Visualization rollouts (with detailed logging for CSV)
             runner_state, traj_batch = jax.lax.scan(
-                functools.partial(_env_step, detailed_logging=True), runner_state, None, config["LOGGING_STEPS_PER_CALL"],
+                functools.partial(_env_step, detailed_logging=True, effective_cap=effective_cap),
+                runner_state,
+                None,
+                config["LOGGING_STEPS_PER_CALL"],
             )
 
             # Finally, log data associated with the visualization runs
@@ -1268,7 +1326,7 @@ def make_train(config, env):
         # ===========================
         # Video Rollout Step (single env — memory-efficient)
         # ===========================
-        def _video_step_1env(runner_state, unused):
+        def _video_step_1env(runner_state, unused, effective_cap=None):
             """One env step for a single environment for video recording.
 
             Uses only 1 env instead of NUM_ENVS.  Rendered frames are streamed
@@ -1311,6 +1369,8 @@ def make_train(config, env):
             obsv, env_state, reward, done, info = jax.vmap(
                 env_train.step, in_axes=(0, 0, 0)
             )(rng_step, env_state, env_act)
+            if effective_cap is not None:
+                env_state = _patch_episode_cap(env_state, effective_cap)
 
             # Render the single env
             craftax_state = jax.tree_util.tree_map(lambda x: x[0], env_state.env_state)
@@ -1340,10 +1400,17 @@ def make_train(config, env):
         def _update_plot(runner_state, unused):
             # First, do iterations of logging
             state, update_steps = runner_state
+            effective_cap = _get_effective_episode_cap(update_steps)
+            state = _apply_episode_cap_to_runner_state(state, effective_cap)
             # episode_count tracks cumulative episode IDs across logging steps: (num_agents, NUM_ENVS)
             episode_count = jnp.zeros((env.num_agents, config["NUM_ENVS"]), dtype=jnp.int32)
             (state, episode_count), empty = jax.lax.scan(
-                functools.partial(_logging_step, logging_threads=config["LOGGING_THREADS"], update_step=update_steps),
+                functools.partial(
+                    _logging_step,
+                    logging_threads=config["LOGGING_THREADS"],
+                    update_step=update_steps,
+                    effective_cap=effective_cap,
+                ),
                 (state, episode_count), None,
                 config["LOGGING_NUM_CALLS"],
             )
@@ -1365,6 +1432,8 @@ def make_train(config, env):
                 # Reset only 1 env for video (saves ~NUM_ENVS × video_length env-state memory)
                 video_reset_rngs = jax.random.split(rng_video, 1)
                 video_obsv, video_env_state = jax.vmap(env_train.reset, in_axes=(0,))(video_reset_rngs)
+                if effective_cap is not None:
+                    video_env_state = _patch_episode_cap(video_env_state, effective_cap)
 
                 # Fresh hidden state (1 env) and done flags
                 video_hstate = jnp.zeros((env.num_agents, 1, config["GRU_HIDDEN_DIM"]))
@@ -1381,7 +1450,10 @@ def make_train(config, env):
                 # Run video rollout — frames are streamed to host via callback,
                 # scan output is None (no GPU memory accumulation)
                 _, _ = jax.lax.scan(
-                    _video_step_1env, video_runner, None, video_length
+                    functools.partial(_video_step_1env, effective_cap=effective_cap),
+                    video_runner,
+                    None,
+                    video_length,
                 )
 
                 # Restore training state with updated RNG (video state discarded)
