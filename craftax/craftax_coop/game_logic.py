@@ -3626,7 +3626,7 @@ def trade_materials(state, action, params, static_params): # only trade with tea
             other_player_is_requesting,
             state.request_type[player_trading_to] == material_type
         )
-        is_giving_material = jnp.logical_and(
+        requested_material_transfer = jnp.logical_and(
             jnp.logical_and( # Checks that other player is requesting and can take materials
                 other_player_is_requesting_material,
                 current_material_stock[player_trading_to] < material_max_value
@@ -3635,6 +3635,18 @@ def trade_materials(state, action, params, static_params): # only trade with tea
                 is_giving,
                 current_material_stock > 0
             )
+        )
+        same_receiver = player_trading_to[:, None] == player_trading_to[None, :]
+        earlier_giver = agent_indices[None, :] < agent_indices[:, None]
+        earlier_transfers_to_receiver = jnp.logical_and(
+            same_receiver,
+            jnp.logical_and(earlier_giver, requested_material_transfer[None, :]),
+        )
+        receiver_capacity = jnp.maximum(material_max_value - current_material_stock, 0)[player_trading_to]
+        accepted_transfer_rank = earlier_transfers_to_receiver.sum(axis=1)
+        is_giving_material = jnp.logical_and(
+            requested_material_transfer,
+            accepted_transfer_rank < receiver_capacity,
         )
         new_material = current_material_stock - 1 * is_giving_material
         new_material = new_material.at[player_trading_to].add(is_giving_material)
@@ -4127,7 +4139,29 @@ def craftax_step(
         * state.log_melee_kills.astype(individual_reward.dtype)
         * (state.player_specialization == Specialization.WARRIOR.value).astype(individual_reward.dtype)
     )
-    individual_reward = individual_reward + warrior_melee_kill_bonus
+    trade_receiver = jnp.maximum(state.log_trade_give_partner_id, 0)
+    forager_to_warrior_trade = (
+        (state.log_trade_give == 1).astype(individual_reward.dtype)
+        * (state.log_trade_give_partner_id >= 0).astype(individual_reward.dtype)
+        * (state.player_specialization == Specialization.FORAGER.value).astype(individual_reward.dtype)
+        * (state.player_specialization[trade_receiver] == Specialization.WARRIOR.value).astype(individual_reward.dtype)
+    )
+    forager_to_warrior_food_trade_bonus = (
+        params.forager_to_warrior_food_trade_reward
+        * (state.log_trade_give_material_id == 0).astype(individual_reward.dtype)
+        * forager_to_warrior_trade
+    )
+    forager_to_warrior_drink_trade_bonus = (
+        params.forager_to_warrior_drink_trade_reward
+        * (state.log_trade_give_material_id == 1).astype(individual_reward.dtype)
+        * forager_to_warrior_trade
+    )
+    individual_reward = (
+        individual_reward
+        + warrior_melee_kill_bonus
+        + forager_to_warrior_food_trade_bonus
+        + forager_to_warrior_drink_trade_bonus
+    )
 
     player_alive = state.player_health > 0.0
 

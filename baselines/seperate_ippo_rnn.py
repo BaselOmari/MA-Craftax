@@ -562,15 +562,19 @@ def make_train(config, env):
 
         _early_episode_cap = config.get("EARLY_EPISODE_CAP", 0)
         _early_episode_cap_until = config.get("EARLY_EPISODE_CAP_UNTIL", 0)
+        _general_episode_cap = config.get("GENERAL_EPISODE_CAP", 0)
         _default_max_timesteps = env.default_params.max_timesteps
+        _post_early_cap = _general_episode_cap if _general_episode_cap > 0 else _default_max_timesteps
 
         def _get_effective_episode_cap(update_steps):
             if _early_episode_cap > 0 and _early_episode_cap_until > 0:
                 return jax.lax.select(
                     update_steps < _early_episode_cap_until,
                     jnp.asarray(_early_episode_cap, dtype=jnp.float32),
-                    jnp.asarray(_default_max_timesteps, dtype=jnp.float32),
+                    jnp.asarray(_post_early_cap, dtype=jnp.float32),
                 )
+            if _general_episode_cap > 0:
+                return jnp.asarray(_general_episode_cap, dtype=jnp.float32)
             return None
 
         def _apply_episode_cap_to_runner_state(runner_state, effective_cap):
@@ -1579,6 +1583,8 @@ def single_run(config):
     one_time_death_penalty_shared = config.get("ONE_TIME_DEATH_PENALTY_SHARED", 0.0)
     one_time_death_penalty_individual = config.get("ONE_TIME_DEATH_PENALTY_INDIVIDUAL", 0.0)
     warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
+    forager_to_warrior_food_trade_reward = config.get("FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
+    forager_to_warrior_drink_trade_reward = config.get("FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
     restrict_auto_respawning_to_spawn_room = config.get("RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM", True)
@@ -1602,6 +1608,8 @@ def single_run(config):
         "one_time_death_penalty_shared": one_time_death_penalty_shared,
         "one_time_death_penalty_individual": one_time_death_penalty_individual,
         "warrior_melee_kill_reward": warrior_melee_kill_reward,
+        "forager_to_warrior_food_trade_reward": forager_to_warrior_food_trade_reward,
+        "forager_to_warrior_drink_trade_reward": forager_to_warrior_drink_trade_reward,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
         "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,

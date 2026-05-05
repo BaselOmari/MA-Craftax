@@ -21,6 +21,8 @@ DEAD_SELF_PENALTY_WEIGHT: 0.2 #individual penalty - does not affect shared rewar
 ONE_TIME_DEATH_PENALTY_SHARED: 0.0
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 0.0
 WARRIOR_MELEE_KILL_REWARD: 5
+FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD: 0.5
+FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD: 0.5
 
 ENABLE_AUTO_RESPAWNING: false
 AUTO_RESPAWN_STEPS: 50
@@ -30,7 +32,8 @@ TRADE_RADIUS: 18
 TRADE_RADIUS_SHAPE: "circle"  # "square" or "circle"
 
 EARLY_EPISODE_CAP: 3000          # Max episode length during early training (0 = disabled)
-EARLY_EPISODE_CAP_UNTIL: 30000   # Training update step until which the cap applies
+EARLY_EPISODE_CAP_UNTIL: 25000   # Training update step until which the cap applies
+GENERAL_EPISODE_CAP: 9000        # Max episode length after early cap ends (0 = use env default)
 TERMINATE_ON_ANY_DEATH: false
 TERMINATE_ON_ANY_DEATH_OFFSET: 800
 

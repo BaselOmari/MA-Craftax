@@ -194,6 +194,8 @@ class EnvParams:
     one_time_death_penalty_shared: float = 0.0  # One-time penalty per death, distributed to the whole team via shared reward.
     one_time_death_penalty_individual: float = 0.0  # One-time penalty per death, applied only to the dead agent (in both reward modes).
     warrior_melee_kill_reward: float = 0.0  # Bonus given to warriors per credited melee-mob kill.
+    forager_to_warrior_food_trade_reward: float = 0.0  # Bonus given to foragers for successfully feeding a warrior.
+    forager_to_warrior_drink_trade_reward: float = 0.0  # Bonus given to foragers for successfully hydrating a warrior.
     enable_auto_respawning: bool = False  # If True, auto-revive dead agents after auto_respawn_steps.
     auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
     restrict_auto_respawning_to_spawn_room: bool = True  # If True, auto-respawn only triggers when the dead agent is inside its own starter room.
