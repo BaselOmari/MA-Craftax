@@ -3687,17 +3687,19 @@ def trade_materials(state, action, params, static_params): # only trade with tea
             trade_receive_partner_id,
         )
     
-    # Block food/drink trades between foragers
+    # Food/drink trades: only allowed in direction FORAGER -> WARRIOR.
+    # Ping-pong exploit (passing food back and forth to reset hunger) is prevented
+    # by the directional restriction: warriors cannot give food back to foragers.
     giver_spec = state.player_specialization
     receiver_spec = state.player_specialization[player_trading_to]
-    both_forager = jnp.logical_and(
+    forager_to_warrior = jnp.logical_and(
         giver_spec == Specialization.FORAGER.value,
-        receiver_spec == Specialization.FORAGER.value,
+        receiver_spec == Specialization.WARRIOR.value,
     )
     _is_giving_all = is_giving
 
-    # Food — blocked between foragers
-    is_giving = jnp.logical_and(_is_giving_all, jnp.logical_not(both_forager))
+    # Food — only forager -> warrior
+    is_giving = jnp.logical_and(_is_giving_all, forager_to_warrior)
     food_trade_count = 0
     new_food, food_trade_count, food_trade_mask = _new_material_value(
         Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count
@@ -3719,9 +3721,10 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         trade_give_partner_id,
         trade_receive_partner_id,
     )
-    # No hunger reset on trade — food is added but hunger counter keeps ticking.
-    # This prevents the ping-pong exploit (passing 1 food back and forth to reset hunger).
-    new_hunger = state.player_hunger
+    # Reset hunger at the receiver when they received food via trade.
+    # food_trade_mask is per-giver; scatter to the corresponding receiver index.
+    food_received_mask = jnp.zeros(food_trade_mask.shape, dtype=jnp.int32).at[player_trading_to].add(food_trade_mask.astype(jnp.int32)) > 0
+    new_hunger = jnp.where(food_received_mask, 0.0, state.player_hunger)
     new_achievements = new_achievements.at[:, Achievement.COLLECT_FOOD.value].set(
         jnp.logical_or(
             new_achievements[:, Achievement.COLLECT_FOOD.value], new_food>state.player_food
@@ -3730,7 +3733,7 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     new_food_trade_count += food_trade_count
     new_trade_count += food_trade_count
 
-    # Drink — blocked between foragers (is_giving still excludes forager pairs)
+    # Drink — only forager -> warrior (is_giving still restricted)
     drink_trade_count = 0
     new_drink, drink_trade_count, drink_trade_mask = _new_material_value(
         Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count
@@ -3752,8 +3755,9 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         trade_give_partner_id,
         trade_receive_partner_id,
     )
-    # No thirst reset on trade — same rationale as hunger above.
-    new_thirst = state.player_thirst
+    # Reset thirst at the receiver when they received drink via trade.
+    drink_received_mask = jnp.zeros(drink_trade_mask.shape, dtype=jnp.int32).at[player_trading_to].add(drink_trade_mask.astype(jnp.int32)) > 0
+    new_thirst = jnp.where(drink_received_mask, 0.0, state.player_thirst)
     new_achievements = new_achievements.at[:, Achievement.COLLECT_DRINK.value].set(
         jnp.logical_or(
             new_achievements[:, Achievement.COLLECT_DRINK.value], new_drink>state.player_drink
