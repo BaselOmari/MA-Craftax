@@ -8,6 +8,7 @@ OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN
 # Environment configuration
 
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
+MAX_PASSIVE_MOBS: 105  # Maximum number of passive mobs allocated/spawnable
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
@@ -21,6 +22,7 @@ DEAD_SELF_PENALTY_WEIGHT: 0.2 #individual penalty - does not affect shared rewar
 ONE_TIME_DEATH_PENALTY_SHARED: 0.0
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 0.0
 WARRIOR_MELEE_KILL_REWARD: 7.5
+WARRIOR_PASSIVE_FOOD_GAIN: 1  # Food gained by a warrior when eating a killed passive mob
 FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD: 1.0
 FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD: 1.0
 
@@ -48,7 +50,7 @@ FC_DIM_SIZE: 128
 ACTIVATION: "tanh"
 
 # Training parameters
-TOTAL_TIMESTEPS: 2000000000
+TOTAL_TIMESTEPS: 4000000000
 NUM_ENVS: 512
 NUM_STEPS: 64
 NUM_MINIBATCHES: 8
