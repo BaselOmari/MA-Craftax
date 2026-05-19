@@ -105,7 +105,15 @@ def attack_mob_class(
     return mobs, did_kill_mob, is_attacking_mob, mobs_killed, new_achievements
 
 
-def attack_mob(state, doing_attack, position, damage_vector, can_eat, attacker_indices):
+def attack_mob(
+    state,
+    doing_attack,
+    position,
+    damage_vector,
+    can_eat,
+    attacker_indices,
+    warrior_passive_food_gain=1,
+):
     monsters_killed = state.monsters_killed
 
     # Melee
@@ -159,7 +167,7 @@ def attack_mob(state, doing_attack, position, damage_vector, can_eat, attacker_i
         3,
         jnp.where(
             state.player_specialization == Specialization.WARRIOR.value,
-            1,
+            warrior_passive_food_gain,
             0,
         ),
     ).astype(state.player_food.dtype)

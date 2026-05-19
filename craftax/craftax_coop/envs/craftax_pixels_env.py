@@ -22,13 +22,20 @@ from craftax_coop.util.game_logic_utils import has_beaten_boss
 from craftax_coop.world_gen.world_gen import generate_world
 
 class CraftaxCoopPixelsEnv(MultiAgentEnv):
-    def __init__(self, num_teams: int = 2, team_composition: tuple = (1, 1, 2), env_params_kwargs: dict = None):
+    def __init__(
+        self,
+        num_teams: int = 2,
+        team_composition: tuple = (1, 1, 2),
+        env_params_kwargs: dict = None,
+        static_env_params_kwargs: dict = None,
+    ):
         player_count = num_teams * len(team_composition)
         self.num_agents = player_count
         self.static_env_params = StaticEnvParams(
             player_count=player_count,
             team_composition=team_composition,
             num_teams=num_teams,
+            **(static_env_params_kwargs or {}),
         )
         self._env_params = EnvParams(**(env_params_kwargs or {}))
         self.pixel_size = BLOCK_PIXEL_SIZE_AGENT

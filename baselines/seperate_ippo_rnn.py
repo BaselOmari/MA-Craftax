@@ -1572,6 +1572,7 @@ def single_run(config):
     env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
     num_teams = config.get("NUM_TEAMS", 2)
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
+    max_passive_mobs = int(config.get("MAX_PASSIVE_MOBS", 105))
     disable_revive = config.get("DISABLE_REVIVE", False)
     terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
     terminate_on_any_death_offset = config.get("TERMINATE_ON_ANY_DEATH_OFFSET", 200)
@@ -1583,6 +1584,7 @@ def single_run(config):
     one_time_death_penalty_shared = config.get("ONE_TIME_DEATH_PENALTY_SHARED", 0.0)
     one_time_death_penalty_individual = config.get("ONE_TIME_DEATH_PENALTY_INDIVIDUAL", 0.0)
     warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
+    warrior_passive_food_gain = int(config.get("WARRIOR_PASSIVE_FOOD_GAIN", 1))
     forager_to_warrior_food_trade_reward = config.get("FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
     forager_to_warrior_drink_trade_reward = config.get("FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
@@ -1597,6 +1599,15 @@ def single_run(config):
         raise ValueError(
             f"TRADE_RADIUS_SHAPE must be 'square' or 'circle', got {trade_radius_shape!r}."
         )
+    if warrior_passive_food_gain < 0:
+        raise ValueError(
+            f"WARRIOR_PASSIVE_FOOD_GAIN must be >= 0, got {warrior_passive_food_gain}."
+        )
+    if max_passive_mobs < 1:
+        raise ValueError(f"MAX_PASSIVE_MOBS must be >= 1, got {max_passive_mobs}.")
+    static_env_params_kwargs = {
+        "max_passive_mobs": max_passive_mobs,
+    }
     env_params_kwargs = {
         "disable_revive": disable_revive,
         "terminate_on_any_death": terminate_on_any_death,
@@ -1608,6 +1619,7 @@ def single_run(config):
         "one_time_death_penalty_shared": one_time_death_penalty_shared,
         "one_time_death_penalty_individual": one_time_death_penalty_individual,
         "warrior_melee_kill_reward": warrior_melee_kill_reward,
+        "warrior_passive_food_gain": warrior_passive_food_gain,
         "forager_to_warrior_food_trade_reward": forager_to_warrior_food_trade_reward,
         "forager_to_warrior_drink_trade_reward": forager_to_warrior_drink_trade_reward,
         "enable_auto_respawning": enable_auto_respawning,
@@ -1618,7 +1630,13 @@ def single_run(config):
         "shared_reward": shared_reward,
     }
     config["ACTION_MASK_WHILE_DEAD"] = action_mask_while_dead
-    env = make_craftax_env_from_name(env_name, num_teams=num_teams, team_composition=team_composition, env_params_kwargs=env_params_kwargs)
+    env = make_craftax_env_from_name(
+        env_name,
+        num_teams=num_teams,
+        team_composition=team_composition,
+        env_params_kwargs=env_params_kwargs,
+        static_env_params_kwargs=static_env_params_kwargs,
+    )
 
     wandb.init(
         entity=config["ENTITY"],

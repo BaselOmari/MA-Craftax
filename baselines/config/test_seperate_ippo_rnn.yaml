@@ -7,6 +7,7 @@ OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN
 
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
+MAX_PASSIVE_MOBS: 105  # Maximum number of passive mobs allocated/spawnable
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
@@ -20,6 +21,7 @@ DEAD_SELF_PENALTY_WEIGHT: 0.2
 ONE_TIME_DEATH_PENALTY_SHARED: 50
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 15
 WARRIOR_MELEE_KILL_REWARD: 5
+WARRIOR_PASSIVE_FOOD_GAIN: 1  # Food gained by a warrior when eating a killed passive mob
 FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD: 1.0
 FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD: 1.0
 
@@ -47,7 +49,7 @@ FC_DIM_SIZE: 8
 ACTIVATION: "tanh"
 
 # Training parameters
-TOTAL_TIMESTEPS: 100000
+TOTAL_TIMESTEPS: 1000
 NUM_ENVS: 2
 NUM_STEPS: 8
 NUM_MINIBATCHES: 2
@@ -70,12 +72,12 @@ REW_SHAPING_HORIZON: 1000000
 # Logging parameters
 LOGGING_UPDATES_INTERVAL: 6  # Number of updates between logging phases
 LOGGING_NUM_CALLS: 2  # Number of logging_step calls per phase
-LOGGING_STEPS_PER_CALL: 400  # Number of env steps per logging_step call
+LOGGING_STEPS_PER_CALL: 20  # Number of env steps per logging_step call
 LOGGING_THREADS: 1  # Number of env threads to log (must be <= NUM_ENVS) -> set to 1 for less computing time
 
 # Video recording parameters
 SAVE_VIDEO: true             # Whether to record and save videos during logging
-VIDEO_LENGTH: 100  # Number of env steps per video (rollout continues from current state)
+VIDEO_LENGTH: 20  # Number of env steps per video (rollout continues from current state)
 VIDEO_PIXEL_SIZE: 16  # Pixel size for rendering (7=agent, 16=medium, 64=large)
 SAVE_HIDDEN_STATES: false     # Whether to save hidden state CSVs during logging (large files!)
 

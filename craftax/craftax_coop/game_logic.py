@@ -384,6 +384,7 @@ def do_action(rng, state, action, env_params, static_params):
         get_player_damage_vector(state),
         can_eat_passive,
         jnp.arange(state.player_position.shape[0], dtype=jnp.int32),
+        env_params.warrior_passive_food_gain,
     )
     
     # Interact with other players (Damage/Revive)
@@ -2251,6 +2252,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectile_damage_vector[None, :],
             jnp.array([False]),
             jnp.array([projectile_owner], dtype=jnp.int32),
+            0,
         )
         did_attack_mob0 = did_attack_mob0[0]
 
@@ -2265,6 +2267,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectile_damage_vector[None, :],
             jnp.array([False]),
             jnp.array([projectile_owner], dtype=jnp.int32),
+            0,
         )
         did_attack_mob1 = did_attack_mob1[0]
 
