@@ -930,8 +930,24 @@ def generate_world(rng, params, static_params):
                         jnp.where(should_spawn, snail_type_id, passive_mobs.type_id[START_LEVEL, mob_idx])),
                 )
 
-    # Per team, spawn 0-1 melee predator with 50% probability in one of the
-    # active spawn rooms.
+    warrior_spawn_room_mask = jnp.stack(
+        [
+            jnp.stack(
+                [
+                    jnp.logical_and(
+                        jnp.logical_and(player_sc == t, room_pair_slot == s),
+                        player_specializations == Specialization.WARRIOR.value,
+                    ).any()
+                    for s in range(room_slot_count)
+                ]
+            )
+            for t in range(num_teams)
+        ]
+    )
+
+    # Per team, spawn 0-1 melee predator with 50% probability. By default the
+    # predator is sampled from all active start rooms; experiments can restrict
+    # this t=0 seeding to the room where the warrior actually starts.
     melee_type_id = FLOOR_MOB_MAPPING[START_LEVEL, MobType.MELEE.value]
     melee_health = MOB_TYPE_HEALTH_MAPPING[melee_type_id, MobType.MELEE.value]
     melee_spawn_offsets = jnp.array(
@@ -955,8 +971,29 @@ def generate_world(rng, params, static_params):
     melee_team_rngs = jax.random.split(_melee_rng, num_teams * 2)
     for t in range(num_teams):
         should_spawn_melee = jax.random.bernoulli(melee_team_rngs[t * 2], 0.5)
-        room_slot_probs = active_spawn_room_mask[t].astype(jnp.float32)
+        active_room_slot_probs = active_spawn_room_mask[t].astype(jnp.float32)
+        warrior_room_slot_probs = jnp.logical_and(
+            active_spawn_room_mask[t],
+            warrior_spawn_room_mask[t],
+        ).astype(jnp.float32)
+        has_warrior_room = warrior_room_slot_probs.sum() > 0
+        restrict_to_warrior_room = jnp.logical_and(
+            params.initial_predators_spawn_in_warrior_rooms_only,
+            has_warrior_room,
+        )
+        room_slot_probs = jnp.where(
+            restrict_to_warrior_room,
+            warrior_room_slot_probs,
+            active_room_slot_probs,
+        )
         room_slot_probs = room_slot_probs / jnp.maximum(room_slot_probs.sum(), 1.0)
+        should_spawn_melee = jnp.logical_and(
+            should_spawn_melee,
+            jnp.logical_or(
+                jnp.logical_not(params.initial_predators_spawn_in_warrior_rooms_only),
+                has_warrior_room,
+            ),
+        )
         chosen_room_slot = jax.random.choice(
             melee_team_rngs[t * 2 + 1],
             jnp.arange(room_slot_count),
@@ -1128,6 +1165,10 @@ def generate_world(rng, params, static_params):
         drink_trade_count=jnp.asarray(0, dtype=jnp.int32),
         revives=jnp.asarray(0, dtype=jnp.int32),
         revive_cooldown_until=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        trade_give_count=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        trade_receive_count=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        revive_as_reviver_count=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        revive_as_revived_count=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         team_kills=jnp.zeros(static_params.num_teams, dtype=jnp.int32),
         walking_distance=jnp.zeros((static_params.player_count,), dtype=jnp.float32),
         sum_distance_to_spawn=jnp.zeros((static_params.player_count,), dtype=jnp.float32),

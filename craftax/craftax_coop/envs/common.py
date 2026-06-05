@@ -66,11 +66,17 @@ def compute_score(state: EnvState, done: bool, static_params: StaticEnvParams):
         achievement_name = f"Achievements/{achievement.name.lower()}"
         info[achievement_name] = achievements[:, achievement.value]
 
-    # Trade metrics (broadcast scalar to match player dimension)
+    # Global episode counters (broadcast scalar to match player dimension)
     info["Trade/total_trades"] = jnp.full(static_params.player_count, state.trade_count, dtype=jnp.float32)
     info["Trade/food_trades"] = jnp.full(static_params.player_count, state.food_trade_count, dtype=jnp.float32)
     info["Trade/drink_trades"] = jnp.full(static_params.player_count, state.drink_trade_count, dtype=jnp.float32)
     info["Revive/revives"] = jnp.full(static_params.player_count, state.revives, dtype=jnp.float32)
+
+    # Per-agent episode counters
+    info["Trade/trades_given"] = state.trade_give_count.astype(jnp.float32)
+    info["Trade/trades_received"] = state.trade_receive_count.astype(jnp.float32)
+    info["Revive/revives_given"] = state.revive_as_reviver_count.astype(jnp.float32)
+    info["Revive/revives_received"] = state.revive_as_revived_count.astype(jnp.float32)
 
     # Team kill metrics (broadcast to match player dimension)
     for t in range(static_params.num_teams):

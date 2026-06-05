@@ -91,7 +91,9 @@ def interplayer_interaction(state, block_position, is_doing_action, env_params, 
     # plus full health and full energy.
     new_player_food = jnp.where(
         is_player_being_revived,
-        jnp.minimum(state.player_food + revive_food_cost, get_max_food(state)),
+        jnp.minimum(
+            state.player_food + revive_food_cost, get_max_food(state, env_params)
+        ),
         state.player_food,
     ) - reviver_food_cost
     new_player_drink = jnp.where(
@@ -384,7 +386,7 @@ def do_action(rng, state, action, env_params, static_params):
         get_player_damage_vector(state),
         can_eat_passive,
         jnp.arange(state.player_position.shape[0], dtype=jnp.int32),
-        env_params.warrior_passive_food_gain,
+        env_params,
     )
     
     # Interact with other players (Damage/Revive)
@@ -719,7 +721,7 @@ def do_action(rng, state, action, env_params, static_params):
     new_map = new_map.at[block_position[:, 0], block_position[:, 1]].set(new_plant)
     new_food = jnp.where(
         is_eating_plant,
-        jnp.minimum(get_max_food(state), state.player_food + 4),
+        jnp.minimum(get_max_food(state, env_params), state.player_food + 4),
         state.player_food,
     )
     new_hunger = jnp.where(is_eating_plant, 0.0, state.player_hunger)
@@ -2252,7 +2254,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectile_damage_vector[None, :],
             jnp.array([False]),
             jnp.array([projectile_owner], dtype=jnp.int32),
-            0,
+            env_params,
         )
         did_attack_mob0 = did_attack_mob0[0]
 
@@ -2267,7 +2269,7 @@ def update_mobs(rng, state, params, env_params, static_params):
             projectile_damage_vector[None, :],
             jnp.array([False]),
             jnp.array([projectile_owner], dtype=jnp.int32),
-            0,
+            env_params,
         )
         did_attack_mob1 = did_attack_mob1[0]
 
@@ -3705,7 +3707,10 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     is_giving = jnp.logical_and(_is_giving_all, forager_to_warrior)
     food_trade_count = 0
     new_food, food_trade_count, food_trade_mask = _new_material_value(
-        Action.REQUEST_FOOD.value, state.player_food, get_max_food(state), food_trade_count
+        Action.REQUEST_FOOD.value,
+        state.player_food,
+        get_max_food(state, params),
+        food_trade_count,
     )
     (
         trade_give,
@@ -4116,7 +4121,9 @@ def craftax_step(
     #ma foraging rewards
     alive_reward = jnp.where(current_player_alive, 0.1, 0.0)
     health_reward = jnp.where(state.player_health / get_max_health(state) > 0.5, 0.1, -0.1)
-    food_reward = jnp.where(state.player_food / get_max_food(state) > 0.5, 0.1, -0.1)
+    food_reward = jnp.where(
+        state.player_food / get_max_food(state, params) > 0.5, 0.1, -0.1
+    )
     drink_reward = jnp.where(state.player_drink / get_max_drink(state) > 0.5, 0.1, -0.1)
     energy_reward = jnp.where(state.player_energy / get_max_energy(state) > 0.5, 0.1, -0.1)
 
@@ -4146,12 +4153,36 @@ def craftax_step(
         * state.log_melee_kills.astype(individual_reward.dtype)
         * (state.player_specialization == Specialization.WARRIOR.value).astype(individual_reward.dtype)
     )
+    forager_melee_kill_bonus = (
+        params.forager_melee_kill_reward
+        * state.log_melee_kills.astype(individual_reward.dtype)
+        * (state.player_specialization == Specialization.FORAGER.value).astype(individual_reward.dtype)
+    )
     trade_receiver = jnp.maximum(state.log_trade_give_partner_id, 0)
+    giver_in_starter_room = jnp.logical_and(
+        (state.player_position >= state.player_spawn_room_min).all(axis=1),
+        (state.player_position <= state.player_spawn_room_max).all(axis=1),
+    )
+    receiver_position = state.player_position[trade_receiver]
+    receiver_in_starter_room = jnp.logical_and(
+        (receiver_position >= state.player_spawn_room_min[trade_receiver]).all(axis=1),
+        (receiver_position <= state.player_spawn_room_max[trade_receiver]).all(axis=1),
+    )
+    both_traders_outside_starter_room = jnp.logical_and(
+        jnp.logical_not(giver_in_starter_room),
+        jnp.logical_not(receiver_in_starter_room),
+    )
+    trade_reward_location_gate = jax.lax.select(
+        params.trade_reward_requires_both_outside_starter_room,
+        both_traders_outside_starter_room.astype(individual_reward.dtype),
+        jnp.ones_like(individual_reward),
+    )
     forager_to_warrior_trade = (
         (state.log_trade_give == 1).astype(individual_reward.dtype)
         * (state.log_trade_give_partner_id >= 0).astype(individual_reward.dtype)
         * (state.player_specialization == Specialization.FORAGER.value).astype(individual_reward.dtype)
         * (state.player_specialization[trade_receiver] == Specialization.WARRIOR.value).astype(individual_reward.dtype)
+        * trade_reward_location_gate
     )
     forager_to_warrior_food_trade_bonus = (
         params.forager_to_warrior_food_trade_reward
@@ -4166,6 +4197,7 @@ def craftax_step(
     individual_reward = (
         individual_reward
         + warrior_melee_kill_bonus
+        + forager_melee_kill_bonus
         + forager_to_warrior_food_trade_bonus
         + forager_to_warrior_drink_trade_bonus
     )
@@ -4279,7 +4311,7 @@ def craftax_step(
     )
     new_player_food = jnp.where(
         should_auto_respawn,
-        get_max_food(state).astype(state.player_food.dtype),
+        get_max_food(state, params).astype(state.player_food.dtype),
         state.player_food,
     )
     new_player_drink = jnp.where(
@@ -4310,6 +4342,24 @@ def craftax_step(
     ).sum(axis=-1).astype(jnp.float32)
     new_sum_distance_to_spawn = state.sum_distance_to_spawn + current_distance_to_spawn
 
+    valid_trade_give = jnp.logical_and(
+        state.log_trade_give.astype(bool),
+        state.log_trade_give_partner_id >= 0,
+    )
+    valid_trade_give_count = valid_trade_give.astype(jnp.int32)
+    trade_receive_delta = jnp.zeros((static_params.player_count,), dtype=jnp.int32).at[
+        jnp.maximum(state.log_trade_give_partner_id, 0)
+    ].add(valid_trade_give_count)
+
+    valid_revived = jnp.logical_and(
+        state.log_revive_as_revived.astype(bool),
+        state.log_revive_partner_id >= 0,
+    )
+    valid_revived_count = valid_revived.astype(jnp.int32)
+    revive_as_reviver_delta = jnp.zeros((static_params.player_count,), dtype=jnp.int32).at[
+        jnp.maximum(state.log_revive_partner_id, 0)
+    ].add(valid_revived_count)
+
     state = state.replace(
         player_alive=player_alive,
         player_health=new_player_health,
@@ -4326,6 +4376,10 @@ def craftax_step(
         individual_reward_return=new_individual_reward_return,
         consecutive_dead_steps=new_consecutive_dead_steps,
         sum_distance_to_spawn=new_sum_distance_to_spawn,
+        trade_give_count=state.trade_give_count + valid_trade_give_count,
+        trade_receive_count=state.trade_receive_count + trade_receive_delta,
+        revive_as_reviver_count=state.revive_as_reviver_count + revive_as_reviver_delta,
+        revive_as_revived_count=state.revive_as_revived_count + valid_revived_count,
     )
 
     return state, reward, individual_reward_shaped

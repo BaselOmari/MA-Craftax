@@ -112,8 +112,29 @@ def attack_mob(
     damage_vector,
     can_eat,
     attacker_indices,
-    warrior_passive_food_gain=1,
+    env_params=None,
 ):
+    has_env_params = hasattr(env_params, "warrior_passive_food_gain")
+    warrior_passive_food_gain = (
+        env_params.warrior_passive_food_gain
+        if has_env_params
+        else (1 if env_params is None else env_params)
+    )
+    forager_passive_food_gain = (
+        env_params.forager_passive_food_gain if has_env_params else 3
+    )
+    forager_predator_damage_multiplier = (
+        env_params.forager_predator_damage_multiplier if has_env_params else 1.0
+    )
+    food_params = env_params if has_env_params else None
+    attacker_specializations = state.player_specialization[attacker_indices]
+    forager_predator_damage_scale = jnp.where(
+        attacker_specializations == Specialization.FORAGER.value,
+        forager_predator_damage_multiplier,
+        1.0,
+    ).astype(damage_vector.dtype)[:, None]
+    predator_damage_vector = damage_vector * forager_predator_damage_scale
+
     monsters_killed = state.monsters_killed
 
     # Melee
@@ -128,7 +149,7 @@ def attack_mob(
         doing_attack,
         state.melee_mobs,
         position,
-        damage_vector,
+        predator_damage_vector,
         True,
         1,
     )
@@ -164,7 +185,7 @@ def attack_mob(
 
     passive_food_gain = jnp.where(
         state.player_specialization == Specialization.FORAGER.value,
-        3,
+        forager_passive_food_gain,
         jnp.where(
             state.player_specialization == Specialization.WARRIOR.value,
             warrior_passive_food_gain,
@@ -173,7 +194,9 @@ def attack_mob(
     ).astype(state.player_food.dtype)
     new_food = jnp.where(
         jnp.logical_and(did_kill_passive_mob, can_eat),
-        jnp.minimum(get_max_food(state), state.player_food + passive_food_gain),
+        jnp.minimum(
+            get_max_food(state, food_params), state.player_food + passive_food_gain
+        ),
         state.player_food,
     )
     new_hunger = jnp.where(
@@ -207,7 +230,7 @@ def attack_mob(
         doing_attack,
         state.ranged_mobs,
         position,
-        damage_vector,
+        predator_damage_vector,
         True,
         2,
     )
@@ -473,8 +496,18 @@ def get_max_health(state):
     return 8 + state.player_strength
 
 
-def get_max_food(state):
-    return (7 + 2 * state.player_dexterity) * (1 + (state.player_specialization == Specialization.FORAGER.value) * 2)
+def get_max_food(state, params=None):
+    base_food = 7 + 2 * state.player_dexterity
+    forager_food_capacity = (
+        base_food * 3
+        if params is None
+        else jnp.asarray(params.forager_food_capacity, dtype=base_food.dtype)
+    )
+    return jnp.where(
+        state.player_specialization == Specialization.FORAGER.value,
+        forager_food_capacity,
+        base_food,
+    )
 
 
 def get_max_drink(state):
@@ -499,7 +532,9 @@ def clip_inventory_and_intrinsics(state, params):
         player_health=jnp.minimum(
             jnp.maximum(state.player_health, min_health), get_max_health(state)
         ),
-        player_food=jnp.minimum(jnp.maximum(state.player_food, 0), get_max_food(state)),
+        player_food=jnp.minimum(
+            jnp.maximum(state.player_food, 0), get_max_food(state, params)
+        ),
         player_drink=jnp.minimum(
             jnp.maximum(state.player_drink, 0), get_max_drink(state)
         ),

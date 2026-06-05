@@ -8,6 +8,8 @@ OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN
 # Environment configuration
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
 MAX_PASSIVE_MOBS: 105  # Maximum number of passive mobs allocated/spawnable
+MAX_MELEE_MOBS: 40  # Maximum number of melee predator mobs allocated/spawnable
+MAX_RANGED_MOBS: 0  # Maximum number of ranged predator mobs allocated/spawnable
 
 DISABLE_REVIVE: false
 REVIVING_COOLDOWN_STEPS: 50
@@ -22,6 +24,8 @@ ONE_TIME_DEATH_PENALTY_SHARED: 50
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 15
 WARRIOR_MELEE_KILL_REWARD: 5
 WARRIOR_PASSIVE_FOOD_GAIN: 1  # Food gained by a warrior when eating a killed passive mob
+FORAGER_PASSIVE_FOOD_GAIN: 3  # Food gained by a forager when eating a killed passive mob
+FORAGER_FOOD_CAPACITY: 27  # Maximum food capacity for foragers
 FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD: 1.0
 FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD: 1.0
 

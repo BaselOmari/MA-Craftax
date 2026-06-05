@@ -127,6 +127,10 @@ class EnvState:
     drink_trade_count: int
     revives: int
     revive_cooldown_until: jnp.ndarray  # (player_count,) earliest timestep when each agent can be revived again
+    trade_give_count: jnp.ndarray  # (player_count,) cumulative successful trades given by each agent
+    trade_receive_count: jnp.ndarray  # (player_count,) cumulative successful trades received by each agent
+    revive_as_reviver_count: jnp.ndarray  # (player_count,) cumulative revives performed by each agent
+    revive_as_revived_count: jnp.ndarray  # (player_count,) cumulative times each agent was revived
     team_kills: jnp.ndarray  # (num_teams,) array: kills against other teams, indexed by killer's team
     walking_distance: jnp.ndarray  # (player_count,) cumulative Manhattan distance
     sum_distance_to_spawn: jnp.ndarray  # (player_count,) sum of per-step Manhattan distance from spawn; divide by timestep for episode average
@@ -194,15 +198,21 @@ class EnvParams:
     one_time_death_penalty_shared: float = 0.0  # One-time penalty per death, distributed to the whole team via shared reward.
     one_time_death_penalty_individual: float = 0.0  # One-time penalty per death, applied only to the dead agent (in both reward modes).
     warrior_melee_kill_reward: float = 0.0  # Bonus given to warriors per credited melee-mob kill.
+    forager_melee_kill_reward: float = 0.0  # Bonus given to foragers per credited melee-mob kill.
     warrior_passive_food_gain: int = 1  # Food a warrior gains when eating a killed passive mob.
+    forager_passive_food_gain: int = 3  # Food a forager gains when eating a killed passive mob.
+    forager_food_capacity: int = 27  # Maximum food capacity for foragers.
+    forager_predator_damage_multiplier: float = 1.0  # Multiplier for forager damage against melee/ranged mobs.
     forager_to_warrior_food_trade_reward: float = 0.0  # Bonus given to foragers for successfully feeding a warrior.
     forager_to_warrior_drink_trade_reward: float = 0.0  # Bonus given to foragers for successfully hydrating a warrior.
+    trade_reward_requires_both_outside_starter_room: bool = False  # If True, food/drink trade bonuses only pay when both traders are outside their own starter rooms.
     enable_auto_respawning: bool = False  # If True, auto-revive dead agents after auto_respawn_steps.
     auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
     restrict_auto_respawning_to_spawn_room: bool = True  # If True, auto-respawn only triggers when the dead agent is inside its own starter room.
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
+    initial_predators_spawn_in_warrior_rooms_only: bool = False  # If True, t=0 melee predators are only seeded in the assigned warrior start room.
 
     # Trading proximity in tiles.
     trade_radius: int = 18

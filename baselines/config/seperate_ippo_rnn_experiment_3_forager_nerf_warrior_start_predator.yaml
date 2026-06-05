@@ -2,14 +2,15 @@
 WANDB_MODE: "online" # Change to "online" for logging and include appropriate ENTITY and PROJECT arguments
 ENTITY: ""
 PROJECT: ""
-RUN_NAME: "RUN-Seperate-IPPO-RNN"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
+RUN_NAME: "RUN-Seperate-IPPO-RNN-Experiment3-ForagerPredDmg0p25-FoodCap12-WarriorStartPredator"  # Optional run name. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
+DESCRIPTION: "Experiment 3: foragers deal 0.25x damage to predator mobs, forager max food is capped at 12, and t=0 preset melee predators spawn only in the actual warrior starting room."
 OUTPUT_DIR: ""  # Optional artifact root. Run files go to <OUTPUT_DIR or .>/<RUN_NAME>/<timestamp>_<wandb_run_id>/
 
 # Environment configuration
 
 ENV_NAME: "Craftax-Coop-Symbolic" # Can be changed to "Craftax-Coop-Symbolic", "Craftax-Coop-Pixels", "Craftax-MA-Symbolic", "Craftax-MA-Pixels"
-MAX_PASSIVE_MOBS: 105  # Maximum number of passive mobs allocated/spawnable
-MAX_MELEE_MOBS: 40  # Maximum number of melee predator mobs allocated/spawnable
+MAX_PASSIVE_MOBS: 131  # Maximum number of passive mobs allocated/spawnable
+MAX_MELEE_MOBS: 20  # 50% of the default melee predator cap
 MAX_RANGED_MOBS: 0  # Maximum number of ranged predator mobs allocated/spawnable
 
 DISABLE_REVIVE: false
@@ -24,15 +25,18 @@ DEAD_SELF_PENALTY_WEIGHT: 0.2 #individual penalty - does not affect shared rewar
 ONE_TIME_DEATH_PENALTY_SHARED: 0.0
 ONE_TIME_DEATH_PENALTY_INDIVIDUAL: 0.0
 WARRIOR_MELEE_KILL_REWARD: 7.5
-WARRIOR_PASSIVE_FOOD_GAIN: 1  # Food gained by a warrior when eating a killed passive mob
-FORAGER_PASSIVE_FOOD_GAIN: 3  # Food gained by a forager when eating a killed passive mob
-FORAGER_FOOD_CAPACITY: 27  # Maximum food capacity for foragers
+FORAGER_MELEE_KILL_REWARD: 0.0  # Bonus given to foragers per credited melee predator kill
+WARRIOR_PASSIVE_FOOD_GAIN: 2  # Food gained by a warrior when eating a killed passive mob
+FORAGER_PASSIVE_FOOD_GAIN: 2  # Food gained by a forager when eating a killed passive mob
+FORAGER_FOOD_CAPACITY: 12  # Maximum food capacity for foragers
+FORAGER_PREDATOR_DAMAGE_MULTIPLIER: 0.25  # Forager damage multiplier against melee/ranged predator mobs
 FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD: 1.0
 FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD: 1.0
 
 ENABLE_AUTO_RESPAWNING: false
 AUTO_RESPAWN_STEPS: 50
 RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM: true
+INITIAL_PREDATORS_SPAWN_IN_WARRIOR_ROOMS_ONLY: true  # Restrict t=0 preset melee predator to the warrior's assigned start room
 
 TRADE_RADIUS: 15
 TRADE_RADIUS_SHAPE: "circle"  # "square" or "circle"
@@ -54,7 +58,7 @@ FC_DIM_SIZE: 128
 ACTIVATION: "tanh"
 
 # Training parameters
-TOTAL_TIMESTEPS: 4000000000
+TOTAL_TIMESTEPS: 2000000000
 NUM_ENVS: 512
 NUM_STEPS: 64
 NUM_MINIBATCHES: 8

@@ -1001,6 +1001,15 @@ def make_train(config, env):
                                 vals.append(v)
                         return np.mean(vals) if vals else None
 
+                    def _team_sum(key, team_idx):
+                        """Sum per-agent episode counters across team members."""
+                        vals = []
+                        for agent_idx in _team_agent_indices(team_idx):
+                            v = _agent_mean(key, agent_idx)
+                            if v is not None:
+                                vals.append(v)
+                        return np.sum(vals) if vals else None
+
                     def _global_mean(key):
                         """Mean of metric over all returned episodes (agent 0, broadcast metric)."""
                         mask = ep_mask[:, :, 0]
@@ -1081,10 +1090,18 @@ def make_train(config, env):
                     v = _global_mean("Revive/revives")
                     if v is not None:
                         to_log["overview/revives"] = v
+
+                    per_agent_event_keys = [
+                        ("Trade/trades_given", "trades_given"),
+                        ("Trade/trades_received", "trades_received"),
+                        ("Revive/revives_given", "revives_given"),
+                        ("Revive/revives_received", "revives_received"),
+                    ]
                     for ai in range(num_agents):
-                        v = _agent_mean("Revive/revives", ai)
-                        if v is not None:
-                            to_log[f"agent_{ai}/revives"] = v
+                        for info_key, log_key in per_agent_event_keys:
+                            v = _agent_mean(info_key, ai)
+                            if v is not None:
+                                to_log[f"agent_{ai}/{log_key}"] = v
 
                     # ── team_{t}/ metrics ──
                     for ti in range(num_teams):
@@ -1114,6 +1131,12 @@ def make_train(config, env):
                             v = _team_mean(f"Combat/{dk}", ti)
                             if v is not None:
                                 to_log[f"{tp}/{dk}"] = v
+
+                        # event counters: sum over team members
+                        for info_key, log_key in per_agent_event_keys:
+                            v = _team_sum(info_key, ti)
+                            if v is not None:
+                                to_log[f"{tp}/{log_key}"] = v
 
                         # combat: damage dealt to other team + kills (broadcast scalars)
                         v = _global_mean(f"Combat/team_{ti}_damage_dealt")
@@ -1572,7 +1595,9 @@ def single_run(config):
     env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
     num_teams = config.get("NUM_TEAMS", 2)
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
+    max_melee_mobs = int(config.get("MAX_MELEE_MOBS", 40))
     max_passive_mobs = int(config.get("MAX_PASSIVE_MOBS", 105))
+    max_ranged_mobs = int(config.get("MAX_RANGED_MOBS", 0))
     disable_revive = config.get("DISABLE_REVIVE", False)
     terminate_on_any_death = config.get("TERMINATE_ON_ANY_DEATH", False)
     terminate_on_any_death_offset = config.get("TERMINATE_ON_ANY_DEATH_OFFSET", 200)
@@ -1584,12 +1609,18 @@ def single_run(config):
     one_time_death_penalty_shared = config.get("ONE_TIME_DEATH_PENALTY_SHARED", 0.0)
     one_time_death_penalty_individual = config.get("ONE_TIME_DEATH_PENALTY_INDIVIDUAL", 0.0)
     warrior_melee_kill_reward = config.get("WARRIOR_MELEE_KILL_REWARD", 0.0)
+    forager_melee_kill_reward = config.get("FORAGER_MELEE_KILL_REWARD", 0.0)
     warrior_passive_food_gain = int(config.get("WARRIOR_PASSIVE_FOOD_GAIN", 1))
+    forager_passive_food_gain = int(config.get("FORAGER_PASSIVE_FOOD_GAIN", 3))
+    forager_food_capacity = int(config.get("FORAGER_FOOD_CAPACITY", 27))
+    forager_predator_damage_multiplier = float(config.get("FORAGER_PREDATOR_DAMAGE_MULTIPLIER", 1.0))
     forager_to_warrior_food_trade_reward = config.get("FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
     forager_to_warrior_drink_trade_reward = config.get("FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
+    trade_reward_requires_both_outside_starter_room = config.get("TRADE_REWARD_REQUIRES_BOTH_OUTSIDE_STARTER_ROOM", False)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
     restrict_auto_respawning_to_spawn_room = config.get("RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM", True)
+    initial_predators_spawn_in_warrior_rooms_only = config.get("INITIAL_PREDATORS_SPAWN_IN_WARRIOR_ROOMS_ONLY", False)
     trade_radius = int(config.get("TRADE_RADIUS", 18))
     trade_radius_shape = str(config.get("TRADE_RADIUS_SHAPE", "square")).lower()
     shared_reward = config.get("SHARED_REWARD", True)
@@ -1603,10 +1634,33 @@ def single_run(config):
         raise ValueError(
             f"WARRIOR_PASSIVE_FOOD_GAIN must be >= 0, got {warrior_passive_food_gain}."
         )
+    if forager_melee_kill_reward < 0:
+        raise ValueError(
+            f"FORAGER_MELEE_KILL_REWARD must be >= 0, got {forager_melee_kill_reward}."
+        )
+    if forager_passive_food_gain < 0:
+        raise ValueError(
+            f"FORAGER_PASSIVE_FOOD_GAIN must be >= 0, got {forager_passive_food_gain}."
+        )
+    if forager_food_capacity < 1:
+        raise ValueError(
+            f"FORAGER_FOOD_CAPACITY must be >= 1, got {forager_food_capacity}."
+        )
+    if forager_predator_damage_multiplier < 0:
+        raise ValueError(
+            "FORAGER_PREDATOR_DAMAGE_MULTIPLIER must be >= 0, "
+            f"got {forager_predator_damage_multiplier}."
+        )
+    if max_melee_mobs < 0:
+        raise ValueError(f"MAX_MELEE_MOBS must be >= 0, got {max_melee_mobs}.")
     if max_passive_mobs < 1:
         raise ValueError(f"MAX_PASSIVE_MOBS must be >= 1, got {max_passive_mobs}.")
+    if max_ranged_mobs < 0:
+        raise ValueError(f"MAX_RANGED_MOBS must be >= 0, got {max_ranged_mobs}.")
     static_env_params_kwargs = {
+        "max_melee_mobs": max_melee_mobs,
         "max_passive_mobs": max_passive_mobs,
+        "max_ranged_mobs": max_ranged_mobs,
     }
     env_params_kwargs = {
         "disable_revive": disable_revive,
@@ -1619,12 +1673,18 @@ def single_run(config):
         "one_time_death_penalty_shared": one_time_death_penalty_shared,
         "one_time_death_penalty_individual": one_time_death_penalty_individual,
         "warrior_melee_kill_reward": warrior_melee_kill_reward,
+        "forager_melee_kill_reward": forager_melee_kill_reward,
         "warrior_passive_food_gain": warrior_passive_food_gain,
+        "forager_passive_food_gain": forager_passive_food_gain,
+        "forager_food_capacity": forager_food_capacity,
+        "forager_predator_damage_multiplier": forager_predator_damage_multiplier,
         "forager_to_warrior_food_trade_reward": forager_to_warrior_food_trade_reward,
         "forager_to_warrior_drink_trade_reward": forager_to_warrior_drink_trade_reward,
+        "trade_reward_requires_both_outside_starter_room": trade_reward_requires_both_outside_starter_room,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
         "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,
+        "initial_predators_spawn_in_warrior_rooms_only": initial_predators_spawn_in_warrior_rooms_only,
         "trade_radius": trade_radius,
         "trade_radius_shape": trade_radius_shape,
         "shared_reward": shared_reward,
