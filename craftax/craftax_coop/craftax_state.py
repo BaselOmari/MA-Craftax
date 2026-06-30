@@ -214,6 +214,7 @@ class EnvParams:
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
     initial_predators_spawn_in_warrior_rooms_only: bool = False  # If True, t=0 melee predators are only seeded in the assigned warrior start room.
+    non_forager_always_in_lone_room: bool = False # If True, non-forager agents always spawn in lone team room instead of randomly sharing a forager room
 
     # Trading proximity in tiles.
     trade_radius: int = 18

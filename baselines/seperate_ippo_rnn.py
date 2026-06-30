@@ -1621,6 +1621,7 @@ def single_run(config):
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
     restrict_auto_respawning_to_spawn_room = config.get("RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM", True)
     initial_predators_spawn_in_warrior_rooms_only = config.get("INITIAL_PREDATORS_SPAWN_IN_WARRIOR_ROOMS_ONLY", False)
+    non_forager_always_in_lone_room = config.get("NON_FORAGER_ALWAYS_IN_LONE_ROOM", False)
     trade_radius = int(config.get("TRADE_RADIUS", 18))
     trade_radius_shape = str(config.get("TRADE_RADIUS_SHAPE", "square")).lower()
     shared_reward = config.get("SHARED_REWARD", True)
@@ -1685,6 +1686,7 @@ def single_run(config):
         "auto_respawn_steps": auto_respawn_steps,
         "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,
         "initial_predators_spawn_in_warrior_rooms_only": initial_predators_spawn_in_warrior_rooms_only,
+        "non_forager_always_in_lone_room": non_forager_always_in_lone_room,
         "trade_radius": trade_radius,
         "trade_radius_shape": trade_radius_shape,
         "shared_reward": shared_reward,

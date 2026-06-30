@@ -689,12 +689,20 @@ def generate_world(rng, params, static_params):
     team_rngs_a = jax.random.split(_rng_ra, num_teams)   # for picking forager-room A per team
     team_rngs_b = jax.random.split(_rng_rb, num_teams)   # for picking forager-room B per team
     team_rngs_c = jax.random.split(_rng_rc, num_teams)   # optional lone non-forager room per team
-    non_forager_room_slots = jax.random.randint(
+    non_forager_room_slots_random = jax.random.randint(
         _rng_non_forager,
         shape=(num_teams,),
         minval=0,
         maxval=3 if has_non_forager_lone_room else 2,
         dtype=jnp.int32,
+    )
+    # when non_forager_always_in_lone_room is True and a lone room exists
+    # force non-forager agents into slot 2 (the lone room) instead of randomly
+    # picking from {0, 1, 2}.
+    non_forager_room_slots = jnp.where(
+        params.non_forager_always_in_lone_room & has_non_forager_lone_room,
+        jnp.full((num_teams,), 2, dtype=jnp.int32),
+        non_forager_room_slots_random,
     )
 
     def _pick_team_rooms(carry, team_idx):
