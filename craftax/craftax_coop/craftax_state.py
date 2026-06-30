@@ -153,6 +153,7 @@ class EnvState:
     log_revive_as_revived: jnp.ndarray  # (player_count,) 1 if agent was revived this step, else 0
     log_revive_partner_id: jnp.ndarray  # (player_count,) counterpart agent id for revive event, -1 if none
     log_melee_kills: jnp.ndarray  # (player_count,) melee mob kills credited to each agent during the current step
+    log_predator_hit: jnp.ndarray  # (player_count,) 1 if agent was hit by a predator this step, else 0
     log_auto_respawned: jnp.ndarray  # (player_count,) 1 if agent auto-respawned this step, else 0
 
     # Per-player bounds of the player's assigned starter room, used by enable_auto_respawning.

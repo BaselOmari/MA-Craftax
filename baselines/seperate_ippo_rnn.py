@@ -1208,7 +1208,7 @@ def make_train(config, env):
                              'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
                              'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                              'trade_give_partner_id', 'trade_receive_partner_id',
-                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
+                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'predator_hit', 'auto_respawned',
                              'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                              ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                    for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1230,7 +1230,7 @@ def make_train(config, env):
                                       'num_ranged_nearby',
                                       'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                                       'trade_give_partner_id', 'trade_receive_partner_id',
-                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
+                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'predator_hit', 'auto_respawned',
                                       'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                                       ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                             for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]

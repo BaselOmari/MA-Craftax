@@ -1637,6 +1637,10 @@ def update_mobs(rng, state, params, env_params, static_params):
                 )
             ),
             damage_taken_melee=state.damage_taken_melee + melee_damage_taken,
+            log_predator_hit=jnp.maximum(
+                state.log_predator_hit,
+                is_attacking_player.astype(state.log_predator_hit.dtype),
+            ),
         )
 
         mob_type = melee_mobs.type_id[state.player_level, melee_mob_index]
@@ -2129,6 +2133,10 @@ def update_mobs(rng, state, params, env_params, static_params):
             player_health=state.player_health - projectile_damage * hit_player,
             is_sleeping=jnp.logical_and(state.is_sleeping, jnp.logical_not(hit_player)),
             is_resting=jnp.logical_and(state.is_resting, jnp.logical_not(hit_player)),
+            log_predator_hit=jnp.maximum(
+                state.log_predator_hit,
+                hit_player.astype(state.log_predator_hit.dtype),
+            ),
             map=state.map.at[state.player_level, position[0], position[1]].set(
                 new_block
             ),
@@ -4028,6 +4036,7 @@ def craftax_step(
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
         log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_predator_hit=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_auto_respawned=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
     )
 

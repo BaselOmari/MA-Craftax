@@ -1191,6 +1191,7 @@ def generate_world(rng, params, static_params):
         log_revive_as_revived=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_revive_partner_id=jnp.full((static_params.player_count,), -1, dtype=jnp.int32),
         log_melee_kills=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
+        log_predator_hit=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         log_auto_respawned=jnp.zeros((static_params.player_count,), dtype=jnp.int32),
         player_spawn_room_min=player_spawn_room_min.astype(jnp.int32),
         player_spawn_room_max=player_spawn_room_max.astype(jnp.int32),
