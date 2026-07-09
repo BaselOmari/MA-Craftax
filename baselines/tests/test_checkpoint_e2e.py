@@ -26,6 +26,12 @@ def _base_cfg():
     return cfg
 
 
+def _derived(cfg):
+    num_updates = cfg["TOTAL_TIMESTEPS"] // cfg["NUM_STEPS"] // cfg["NUM_ENVS"]
+    num_logging_iters = num_updates // cfg["LOGGING_UPDATES_INTERVAL"]
+    return num_updates, num_logging_iters
+
+
 def _write_cfg(path, cfg):
     with open(path, "w") as f:
         yaml.safe_dump(cfg, f)
@@ -71,6 +77,8 @@ def test_cli_resume_matches_uninterrupted(tmp_path):
     dir_a = str(tmp_path / "a_ckpt")
     dir_b = str(tmp_path / "b_ckpt")
 
+    num_updates, num_logging_iters = _derived(_base_cfg())
+
     cfg_a = _base_cfg()
     cfg_a["CHECKPOINT_DIR"] = dir_a
     cfg_a["OUTPUT_DIR"] = str(tmp_path / "a_out")
@@ -79,7 +87,7 @@ def test_cli_resume_matches_uninterrupted(tmp_path):
     _write_cfg(path_a, cfg_a)
     _run(path_a)
 
-    k = max(1, cfg_a["NUM_LOGGING_ITERS"] // 2)
+    k = max(1, num_logging_iters // 2)
     cfg_b1 = _base_cfg()
     cfg_b1["CHECKPOINT_DIR"] = dir_b
     cfg_b1["OUTPUT_DIR"] = str(tmp_path / "b_out")
@@ -102,8 +110,8 @@ def test_cli_resume_matches_uninterrupted(tmp_path):
     carry_a = _final_carry(cfg_a, dir_a)
     carry_b = _final_carry(cfg_b2, dir_b)
 
-    assert int(carry_a[1]) == cfg_a["NUM_UPDATES"]
-    assert int(carry_b[1]) == cfg_b2["NUM_UPDATES"]
+    assert int(carry_a[1]) == num_updates
+    assert int(carry_b[1]) == num_updates
 
     leaves_a = jax.tree_util.tree_leaves(carry_a)
     leaves_b = jax.tree_util.tree_leaves(carry_b)

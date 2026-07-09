@@ -216,6 +216,17 @@ def test_save_restore_handles_zero_size_arrays(tmp_path):
     assert int(restored[1]) == 6
 
 
+def test_normalize_resume_mode():
+    assert ckpt.normalize_resume_mode("auto") == "auto"
+    assert ckpt.normalize_resume_mode(True) == "true"
+    assert ckpt.normalize_resume_mode(False) == "false"
+    assert ckpt.normalize_resume_mode("true") == "true"
+    assert ckpt.normalize_resume_mode("False") == "false"
+    assert ckpt.normalize_resume_mode(" AUTO ") == "auto"
+    with pytest.raises(ValueError):
+        ckpt.normalize_resume_mode("yes")
+
+
 def test_stop_requested_toggle():
     ckpt._STOP["requested"] = False
     assert ckpt.stop_requested() is False

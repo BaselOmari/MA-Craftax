@@ -31,6 +31,16 @@ def default_checkpoint_dir(config):
     return os.path.abspath(os.path.join(root, run, "checkpoints"))
 
 
+def normalize_resume_mode(value):
+    """Normalize a RESUME config value to one of 'auto', 'true', or 'false'."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    text = str(value).strip().lower()
+    if text not in {"auto", "true", "false"}:
+        raise ValueError(f"RESUME must be 'auto', true, or false, got {value!r}.")
+    return text
+
+
 def sidecar_path(ckpt_dir):
     """Return the path of the run metadata file placed beside the checkpoint directory."""
     return os.path.join(os.path.dirname(os.path.abspath(ckpt_dir)), "run_meta.json")

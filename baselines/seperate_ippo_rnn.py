@@ -1705,7 +1705,7 @@ def single_run(config):
 
     checkpointing = config.get("CHECKPOINTING", True)
     ckpt_dir = ckpt.default_checkpoint_dir(config)
-    resume_mode = config.get("RESUME", "auto")
+    resume_mode = ckpt.normalize_resume_mode(config.get("RESUME", "auto"))
 
     mngr = None
     meta = None
@@ -1714,11 +1714,16 @@ def single_run(config):
         mngr = ckpt.make_manager(ckpt_dir, config)
         meta = ckpt.read_sidecar(ckpt_dir)
         have_ckpt = mngr.latest_step() is not None and meta is not None
-        if resume_mode is True and not have_ckpt:
+        if resume_mode == "true" and not have_ckpt:
             raise FileNotFoundError(
                 f"RESUME is true but no complete checkpoint was found in {ckpt_dir}."
             )
-        resuming = have_ckpt and resume_mode is not False
+        resuming = have_ckpt and resume_mode != "false"
+        if have_ckpt and not resuming:
+            print(
+                f"[warning] existing checkpoints in {ckpt_dir} are being ignored "
+                "because RESUME is false; new checkpoints may mix with old steps."
+            )
 
     wandb.init(
         entity=config["ENTITY"],
