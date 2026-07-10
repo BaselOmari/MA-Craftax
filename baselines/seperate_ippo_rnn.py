@@ -23,6 +23,8 @@ import yaml
 from typing import Sequence, NamedTuple, Dict
 
 import jax
+if not hasattr(jax, 'tree_map'):
+    jax.tree_map = jax.tree_util.tree_map
 import jax.numpy as jnp
 import numpy as np
 
@@ -1208,7 +1210,7 @@ def make_train(config, env):
                              'ranged_on_screen', 'num_melee_nearby', 'num_passives_nearby', 'num_ranged_nearby',
                              'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                              'trade_give_partner_id', 'trade_receive_partner_id',
-                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'predator_hit', 'auto_respawned',
+                             'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
                              'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                              ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                    for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1230,7 +1232,7 @@ def make_train(config, env):
                                       'num_ranged_nearby',
                                       'trade_give', 'trade_receive', 'trade_give_material_id', 'trade_receive_material_id',
                                       'trade_give_partner_id', 'trade_receive_partner_id',
-                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'predator_hit', 'auto_respawned',
+                                      'revive_as_reviver', 'revive_as_revived', 'revive_partner_id', 'auto_respawned',
                                       'delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y',
                                       ] + ([f'{k}_{j}' for j in range(_agents_per_team)
                                             for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
@@ -1616,6 +1618,8 @@ def single_run(config):
     forager_predator_damage_multiplier = float(config.get("FORAGER_PREDATOR_DAMAGE_MULTIPLIER", 1.0))
     forager_to_warrior_food_trade_reward = config.get("FORAGER_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
     forager_to_warrior_drink_trade_reward = config.get("FORAGER_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
+    warrior_to_warrior_food_trade_reward = config.get("WARRIOR_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
+    warrior_to_warrior_drink_trade_reward = config.get("WARRIOR_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
     trade_reward_requires_both_outside_starter_room = config.get("TRADE_REWARD_REQUIRES_BOTH_OUTSIDE_STARTER_ROOM", False)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
@@ -1680,6 +1684,8 @@ def single_run(config):
         "forager_predator_damage_multiplier": forager_predator_damage_multiplier,
         "forager_to_warrior_food_trade_reward": forager_to_warrior_food_trade_reward,
         "forager_to_warrior_drink_trade_reward": forager_to_warrior_drink_trade_reward,
+        "warrior_to_warrior_food_trade_reward": warrior_to_warrior_food_trade_reward,
+        "warrior_to_warrior_drink_trade_reward": warrior_to_warrior_drink_trade_reward,
         "trade_reward_requires_both_outside_starter_room": trade_reward_requires_both_outside_starter_room,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
