@@ -189,6 +189,7 @@ class EnvParams:
     reward_func: str = 'foraging'  # 'vanilla' or 'foraging'
     friendly_fire: bool = True
     allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
+    enable_warrior_to_warrior_trading: bool = False #If True warriors can trade with each other
     disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
     terminate_on_any_death: bool = False  # If True, the episode ends once any agent has remained dead longer than terminate_on_any_death_offset.
     terminate_on_any_death_offset: int = 200  # Dead-step threshold used when terminate_on_any_death is enabled.

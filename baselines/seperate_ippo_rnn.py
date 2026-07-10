@@ -1622,6 +1622,7 @@ def single_run(config):
     warrior_to_warrior_drink_trade_reward = config.get("WARRIOR_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
     trade_reward_requires_both_outside_starter_room = config.get("TRADE_REWARD_REQUIRES_BOTH_OUTSIDE_STARTER_ROOM", False)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
+    enable_warrior_to_warrior_trading = config.get("ENABLE_WARRIOR_TO_WARRIOR_TRADING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
     restrict_auto_respawning_to_spawn_room = config.get("RESTRICT_AUTO_RESPAWNING_TO_SPAWN_ROOM", True)
     initial_predators_spawn_in_warrior_rooms_only = config.get("INITIAL_PREDATORS_SPAWN_IN_WARRIOR_ROOMS_ONLY", False)
@@ -1686,6 +1687,7 @@ def single_run(config):
         "forager_to_warrior_drink_trade_reward": forager_to_warrior_drink_trade_reward,
         "warrior_to_warrior_food_trade_reward": warrior_to_warrior_food_trade_reward,
         "warrior_to_warrior_drink_trade_reward": warrior_to_warrior_drink_trade_reward,
+        "enable_warrior_to_warrior_trading": enable_warrior_to_warrior_trading
         "trade_reward_requires_both_outside_starter_room": trade_reward_requires_both_outside_starter_room,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,

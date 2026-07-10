@@ -3708,10 +3708,15 @@ def trade_materials(state, action, params, static_params): # only trade with tea
         giver_spec == Specialization.FORAGER.value,
         receiver_spec == Specialization.WARRIOR.value,
     )
+    
     warrior_to_warrior = jnp.logical_and(
+    jnp.logical_and(
         giver_spec == Specialization.WARRIOR.value,
         receiver_spec == Specialization.WARRIOR.value,
+    ),
+    params.enable_warrior_to_warrior_trading,
     )
+
     _is_giving_all = is_giving
     food_drink_trade_allowed = jnp.logical_or(forager_to_warrior, warrior_to_warrior)
 
