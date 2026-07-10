@@ -3700,19 +3700,28 @@ def trade_materials(state, action, params, static_params): # only trade with tea
             trade_receive_partner_id,
         )
     
-    # Food/drink trades: only allowed in direction FORAGER -> WARRIOR.
-    # Ping-pong exploit (passing food back and forth to reset hunger) is prevented
-    # by the directional restriction: warriors cannot give food back to foragers.
+    # Food/drink trades: both directions allowed (Warrior -> Warrior and Forager -> Warrior), no restrictions (for warrior only)
+    # Ping-Ponging of trading between Warriors and Warriors not prevented 
     giver_spec = state.player_specialization
     receiver_spec = state.player_specialization[player_trading_to]
     forager_to_warrior = jnp.logical_and(
         giver_spec == Specialization.FORAGER.value,
         receiver_spec == Specialization.WARRIOR.value,
     )
-    _is_giving_all = is_giving
+    
+    warrior_to_warrior = jnp.logical_and(
+    jnp.logical_and(
+        giver_spec == Specialization.WARRIOR.value,
+        receiver_spec == Specialization.WARRIOR.value,
+    ),
+    params.enable_warrior_to_warrior_trading,
+    )
 
-    # Food — only forager -> warrior
-    is_giving = jnp.logical_and(_is_giving_all, forager_to_warrior)
+    _is_giving_all = is_giving
+    food_drink_trade_allowed = jnp.logical_or(forager_to_warrior, warrior_to_warrior)
+
+    # Food — forager -> warrior and warrior -> warrior
+    is_giving = jnp.logical_and(_is_giving_all, food_drink_trade_allowed)
     food_trade_count = 0
     new_food, food_trade_count, food_trade_mask = _new_material_value(
         Action.REQUEST_FOOD.value,
@@ -3749,7 +3758,7 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     new_food_trade_count += food_trade_count
     new_trade_count += food_trade_count
 
-    # Drink — only forager -> warrior (is_giving still restricted)
+    # Drink — only forager -> warrior and warrior -> warrior
     drink_trade_count = 0
     new_drink, drink_trade_count, drink_trade_mask = _new_material_value(
         Action.REQUEST_DRINK.value, state.player_drink, get_max_drink(state), drink_trade_count
@@ -3782,7 +3791,7 @@ def trade_materials(state, action, params, static_params): # only trade with tea
     new_drink_trade_count += drink_trade_count
     new_trade_count += drink_trade_count
 
-    # Restore is_giving for non-food/drink materials (forager restriction only applies to food/drink)
+    # Restore is_giving for non-food/drink materials 
     is_giving = _is_giving_all
 
     # Inventory Materials
@@ -4203,12 +4212,32 @@ def craftax_step(
         * (state.log_trade_give_material_id == 1).astype(individual_reward.dtype)
         * forager_to_warrior_trade
     )
+    # new warrior -> warrior trade bonus calculations
+    warrior_to_warrior_trade = (
+        (state.log_trade_give == 1).astype(individual_reward.dtype)
+        * (state.log_trade_give_partner_id >= 0).astype(individual_reward.dtype)
+        * (state.player_specialization == Specialization.WARRIOR.value).astype(individual_reward.dtype)
+        * (state.player_specialization[trade_receiver] == Specialization.WARRIOR.value).astype(individual_reward.dtype)
+        * trade_reward_location_gate
+    )
+    warrior_to_warrior_food_trade_bonus = (
+        params.warrior_to_warrior_food_trade_reward
+        * (state.log_trade_give_material_id == 0).astype(individual_reward.dtype)
+        * warrior_to_warrior_trade
+    )
+    warrior_to_warrior_drink_trade_bonus = (
+        params.warrior_to_warrior_drink_trade_reward
+        * (state.log_trade_give_material_id == 1).astype(individual_reward.dtype)
+        * warrior_to_warrior_trade
+    )
     individual_reward = (
         individual_reward
         + warrior_melee_kill_bonus
         + forager_melee_kill_bonus
         + forager_to_warrior_food_trade_bonus
         + forager_to_warrior_drink_trade_bonus
+        + warrior_to_warrior_drink_trade_bonus
+        + warrior_to_warrior_food_trade_bonus
     )
 
     player_alive = state.player_health > 0.0

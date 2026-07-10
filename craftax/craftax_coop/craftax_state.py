@@ -189,6 +189,7 @@ class EnvParams:
     reward_func: str = 'foraging'  # 'vanilla' or 'foraging'
     friendly_fire: bool = True
     allow_neg_reward_if_dead: bool = False  # If True, dead agents get max negative foraging step reward.
+    enable_warrior_to_warrior_trading: bool = False #If True warriors can trade with each other
     disable_revive: bool = False  # If True, players cannot revive downed teammates -> can also be set in yaml
     terminate_on_any_death: bool = False  # If True, the episode ends once any agent has remained dead longer than terminate_on_any_death_offset.
     terminate_on_any_death_offset: int = 200  # Dead-step threshold used when terminate_on_any_death is enabled.
@@ -206,10 +207,13 @@ class EnvParams:
     forager_predator_damage_multiplier: float = 1.0  # Multiplier for forager damage against melee/ranged mobs.
     forager_to_warrior_food_trade_reward: float = 0.0  # Bonus given to foragers for successfully feeding a warrior.
     forager_to_warrior_drink_trade_reward: float = 0.0  # Bonus given to foragers for successfully hydrating a warrior.
+    warrior_to_warrior_drink_trade_reward: float = 0.0 #Bonus given to warriors for successfully hydrating another warrior
+    warrior_to_warrior_food_trade_reward: float = 0.0 #Bonus given to warriors for succesfully feeding another warrior
     trade_reward_requires_both_outside_starter_room: bool = False  # If True, food/drink trade bonuses only pay when both traders are outside their own starter rooms.
     enable_auto_respawning: bool = False  # If True, auto-revive dead agents after auto_respawn_steps.
     auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
     restrict_auto_respawning_to_spawn_room: bool = True  # If True, auto-respawn only triggers when the dead agent is inside its own starter room.
+
 
     # Team Spawning Parameters
     min_team_spawn_distance: int = 15
