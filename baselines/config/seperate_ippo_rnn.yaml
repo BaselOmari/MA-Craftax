@@ -89,3 +89,11 @@ SAVE_VIDEO: true             # Whether to record and save videos during logging
 VIDEO_LENGTH: 1000  # Number of env steps per video (rollout continues from current state)
 VIDEO_PIXEL_SIZE: 16  # Pixel size for rendering (7=agent, 16=medium, 64=large)
 SAVE_HIDDEN_STATES: false     # Whether to save hidden state CSVs during logging (large files!)
+
+# Checkpointing configuration
+CHECKPOINTING: true             # Enable saving/resuming training checkpoints
+CHECKPOINT_DIR: ""              # Empty -> <OUTPUT_DIR or .>/<RUN_NAME>/checkpoints (must stay stable across restarts)
+CHECKPOINT_INTERVAL_BLOCKS: 1   # Save a checkpoint every N logging phases
+CHECKPOINT_MAX_TO_KEEP: 3       # Number of recent checkpoints to retain
+RESUME: "auto"                  # "auto" resumes if a checkpoint exists, true forces resume, false starts fresh
+MAX_BLOCKS_THIS_RUN: 0          # >0 checkpoints and exits after this many logging phases this run (for wall-time limits)

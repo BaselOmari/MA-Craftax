@@ -45,6 +45,8 @@ from craftax.custom_rendering.base_rendering import load_rendering_resources
 from craftax.custom_rendering.ego_rendering import render_ego_perspective
 from craftax.custom_rendering.full_map_rendering import render_full_map
 
+import checkpoint_utils as ckpt
+
 # ===========================
 # Model Definitions
 # ===========================
@@ -237,9 +239,10 @@ def make_train(config, env):
         configured_output_dir = config.get("OUTPUT_DIR", "")
         output_root = os.path.expanduser(configured_output_dir) if configured_output_dir else "."
         run_group_dir = sanitize_path_component(config.get("RUN_NAME", "run"), fallback="run")
+        run_id = getattr(wandb.run, "id", None) if wandb.run is not None else None
         run_instance_dir = "{}_{}".format(
             datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"),
-            wandb.run.id,
+            run_id if run_id is not None else "norun",
         )
         run_output_dir = os.path.join(output_root, run_group_dir, run_instance_dir)
         print(f"Run artifacts will be written to: {run_output_dir}")
@@ -1570,28 +1573,16 @@ def make_train(config, env):
             init_hstate,
             _rng,
         )
-        if config["NUM_LOGGING_ITERS"] > 0:
-            runner_state, metric = jax.lax.scan(
-                _update_plot, (runner_state, 0), None, config["NUM_LOGGING_ITERS"]
-            )
-            update_runner_state = runner_state
-        else:
-            metric = None
-            update_runner_state = (runner_state, 0)
-        # Finish any leftover updates without an extra logging/video phase.
-        if config["REMAINING_UPDATES"] > 0:
-            update_runner_state, _ = jax.lax.scan(
-                _update_step, update_runner_state, None, config["REMAINING_UPDATES"]
-            )
-        return {"runner_state": update_runner_state}
+        init_carry = (runner_state, jnp.asarray(0, dtype=jnp.int32))
+        return init_carry, _update_plot, _update_step
 
     return train
 
 # ===========================
 # Main Run Function
 # ===========================
-def single_run(config):
-    alg_name = config.get("ALG_NAME", "seperate-ippo-rnn")
+def build_env(config):
+    """Construct the wrapped Craftax environment described by the config."""
     env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
     num_teams = config.get("NUM_TEAMS", 2)
     team_composition = tuple(config.get("TEAM_COMPOSITION", [1, 1, 2]))
@@ -1699,6 +1690,40 @@ def single_run(config):
         env_params_kwargs=env_params_kwargs,
         static_env_params_kwargs=static_env_params_kwargs,
     )
+    return env
+
+
+def single_run(config):
+    alg_name = config.get("ALG_NAME", "seperate-ippo-rnn")
+    env_name = config.get("ENV_NAME", "Craftax-Coop-Symbolic")
+    env = build_env(config)
+
+    if config["NUM_SEEDS"] != 1:
+        raise ValueError(
+            "seperate_ippo_rnn currently supports NUM_SEEDS == 1 for reliable logging/video callbacks."
+        )
+
+    checkpointing = config.get("CHECKPOINTING", True)
+    ckpt_dir = ckpt.default_checkpoint_dir(config)
+    resume_mode = ckpt.normalize_resume_mode(config.get("RESUME", "auto"))
+
+    mngr = None
+    meta = None
+    resuming = False
+    if checkpointing:
+        mngr = ckpt.make_manager(ckpt_dir, config)
+        meta = ckpt.read_sidecar(ckpt_dir)
+        have_ckpt = mngr.latest_step() is not None and meta is not None
+        if resume_mode == "true" and not have_ckpt:
+            raise FileNotFoundError(
+                f"RESUME is true but no complete checkpoint was found in {ckpt_dir}."
+            )
+        resuming = have_ckpt and resume_mode != "false"
+        if have_ckpt and not resuming:
+            print(
+                f"[warning] existing checkpoints in {ckpt_dir} are being ignored "
+                "because RESUME is false; new checkpoints may mix with old steps."
+            )
 
     wandb.init(
         entity=config["ENTITY"],
@@ -1709,21 +1734,76 @@ def single_run(config):
             f"jax_{jax.__version__}",
         ],
         name=config["RUN_NAME"],
+        id=(meta["wandb_run_id"] if resuming else None),
+        resume=("allow" if resuming else None),
         config=config,
         mode=config["WANDB_MODE"],
     )
+    wandb_run_id = getattr(wandb.run, "id", None) if wandb.run is not None else None
 
     rng = jax.random.PRNGKey(config["SEED"])
+    train_fn = make_train(config, env)
+    init_carry, update_plot_fn, update_step_fn = train_fn(rng)
+    jit_plot = jax.jit(update_plot_fn)
+    fingerprint = ckpt.structural_fingerprint(init_carry)
 
-    if config["NUM_SEEDS"] == 1:
-        train_jit = jax.jit(make_train(config, env))
-        outs = jax.block_until_ready(train_jit(rng))
+    if resuming:
+        ckpt.check_compatibility(meta, fingerprint, config)
+        carry = ckpt.restore_carry(mngr, init_carry)
+        start_block = int(carry[1]) // config["LOGGING_UPDATES_INTERVAL"]
+        print(f"[resume] update_steps={int(carry[1])} start_block={start_block}")
     else:
-        # Host callbacks (wandb/file/video logging) under vmap have non-trivial semantics.
-        # Keep multi-seed mode explicit to avoid silently interleaved side effects.
-        raise ValueError(
-            "seperate_ippo_rnn currently supports NUM_SEEDS == 1 for reliable logging/video callbacks."
+        carry = init_carry
+        start_block = 0
+        if checkpointing:
+            ckpt.write_sidecar(
+                ckpt_dir,
+                {
+                    "wandb_run_id": wandb_run_id,
+                    "fingerprint": fingerprint,
+                    "blocks_done": 0,
+                    "update_steps": 0,
+                    "logging_updates_interval": config["LOGGING_UPDATES_INTERVAL"],
+                    "num_updates": config["NUM_UPDATES"],
+                    "final": False,
+                },
+            )
+
+    num_logging_iters = config["NUM_LOGGING_ITERS"]
+    interval = max(1, int(config.get("CHECKPOINT_INTERVAL_BLOCKS", 1)))
+    max_blocks = int(config.get("MAX_BLOCKS_THIS_RUN", 0))
+    ckpt.install_signal_handler()
+
+    blocks_this_run = 0
+    for block in range(start_block, num_logging_iters):
+        carry, _ = jit_plot(carry, None)
+        carry = jax.block_until_ready(carry)
+        blocks_this_run += 1
+        done_blocks = block + 1
+        stop = ckpt.stop_requested() or (max_blocks and blocks_this_run >= max_blocks)
+        periodic = done_blocks % interval == 0 or done_blocks == num_logging_iters
+        if checkpointing and (periodic or stop):
+            ckpt.save_checkpoint(mngr, carry, done_blocks, ckpt_dir, wandb_run_id, fingerprint, config)
+        if stop:
+            if checkpointing:
+                mngr.wait_until_finished()
+            print(f"[stop] checkpointed at block {done_blocks}; exiting for resume")
+            wandb.finish()
+            return
+
+    if config["REMAINING_UPDATES"] > 0 and int(carry[1]) < config["NUM_UPDATES"]:
+        scan_tail = jax.jit(
+            lambda c: jax.lax.scan(update_step_fn, c, None, config["REMAINING_UPDATES"])
         )
+        carry, _ = scan_tail(carry)
+        carry = jax.block_until_ready(carry)
+
+    if checkpointing:
+        ckpt.save_checkpoint(
+            mngr, carry, num_logging_iters, ckpt_dir, wandb_run_id, fingerprint, config, final=True
+        )
+        mngr.wait_until_finished()
+    wandb.finish()
 
 
 def main():

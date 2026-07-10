@@ -1,4 +1,7 @@
 .venv
+.venv-gpu
+.pytest_cache/
+checkpointing-plan.md
 baselines/wandb
 craftax/__pycache__/
 __pycache__/
