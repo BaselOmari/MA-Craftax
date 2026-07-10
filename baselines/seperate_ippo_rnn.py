@@ -1562,7 +1562,7 @@ def make_train(config, env):
                 _update_step, runner_state, None, config["LOGGING_UPDATES_INTERVAL"]
             )
 
-            return runner_state, metric
+            return runner_state, None
 
         rng, _rng = jax.random.split(rng)
         runner_state = (
@@ -1744,7 +1744,12 @@ def single_run(config):
     rng = jax.random.PRNGKey(config["SEED"])
     train_fn = make_train(config, env)
     init_carry, update_plot_fn, update_step_fn = train_fn(rng)
-    jit_plot = jax.jit(update_plot_fn)
+    # Donate the carry so each per-block call reuses the input buffers for its
+    # output instead of transiently holding two full copies of the training
+    # state. Safe alongside async checkpointing: orbax completes the
+    # device-to-host copy synchronously inside save(), so donated buffers are
+    # never still in flight when the next block runs.
+    jit_plot = jax.jit(update_plot_fn, donate_argnums=0)
     fingerprint = ckpt.structural_fingerprint(init_carry)
 
     if resuming:
@@ -1769,6 +1774,11 @@ def single_run(config):
                 },
             )
 
+    # Drop the init_carry name so the initial training-state buffers can be
+    # freed (fresh runs: donated to jit_plot on the first call; resumed runs:
+    # the restore template is no longer needed once carry is restored).
+    del init_carry
+
     num_logging_iters = config["NUM_LOGGING_ITERS"]
     interval = max(1, int(config.get("CHECKPOINT_INTERVAL_BLOCKS", 1)))
     max_blocks = int(config.get("MAX_BLOCKS_THIS_RUN", 0))
@@ -1792,8 +1802,18 @@ def single_run(config):
             return
 
     if config["REMAINING_UPDATES"] > 0 and int(carry[1]) < config["NUM_UPDATES"]:
+        # Drop the per-update metric inside the jit so XLA can dead-code-eliminate
+        # the stacked (REMAINING_UPDATES, ...) metric buffers instead of
+        # materializing them as live outputs. Wandb logging is unaffected: it runs
+        # via the io_callback inside update_step_fn.
         scan_tail = jax.jit(
-            lambda c: jax.lax.scan(update_step_fn, c, None, config["REMAINING_UPDATES"])
+            lambda c: jax.lax.scan(
+                lambda inner_c, unused: (update_step_fn(inner_c, unused)[0], None),
+                c,
+                None,
+                config["REMAINING_UPDATES"],
+            ),
+            donate_argnums=0,
         )
         carry, _ = scan_tail(carry)
         carry = jax.block_until_ready(carry)
