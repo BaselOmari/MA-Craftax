@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import datetime
+import time
 import functools
 import tempfile
 import yaml
@@ -939,6 +940,9 @@ def make_train(config, env):
 
             rng = update_state[-1]
 
+            #State for sps computations
+            _sps_state = {'last_time':None, 'last_env_step': None}
+
             def callback(metrics, step):
                 env_step = (
                     metrics["update_steps"]
@@ -964,6 +968,20 @@ def make_train(config, env):
                     agents_per_team = int(np.ceil(num_agents / num_teams))
 
                 to_log = {}
+
+                # Steps per second. Measures env-step throughput between logging calls
+                # Note: SPS drops during logging phases when videos are being saved.
+                # This is expected and not a training slowdown
+                _now = time.perf_counter()
+                _current_env_step = int(env_step)
+                if _sps_state["last_time"] is not None:
+                    _elapsed = _now - _sps_state["last_time"]
+                    _steps_taken = _current_env_step - _sps_state["last_env_step"]
+                    if _elapsed > 0:
+                        to_log["overview/sps"] = _steps_taken/_elapsed
+                
+                _sps_state["last_time"] = _now
+                _sps_state["last_env_step"] = _current_env_step
 
                 # ── overview/ ──
                 to_log["overview/env_step"] = env_step
