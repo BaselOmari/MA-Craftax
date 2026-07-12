@@ -177,6 +177,7 @@ class EnvParams:
     ranged_mob_health: int = 3
 
     mob_despawn_distance: int = 500
+    melee_mob_despawn_distance: int = 14
     max_attribute: int = 5
 
 
