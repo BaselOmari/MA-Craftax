@@ -612,6 +612,14 @@ def generate_world(rng, params, static_params):
         0,
         1,
     )
+    # Role-aware index of each non-forager within a team composition, used to
+    # spread warriors/miners across distinct rooms when
+    # spread_non_foragers_across_rooms is enabled.
+    non_forager_rank_by_slot = jnp.clip(
+        jnp.cumsum((comp != Specialization.FORAGER.value).astype(jnp.int32)) - 1,
+        0,
+        None,
+    )
 
     # Fix player subclasses (team assignment)
     # e.g. 6 players, 3 per team -> [0, 0, 0, 1, 1, 1]
@@ -754,6 +762,18 @@ def generate_world(rng, params, static_params):
     # Room-pair slot: first forager in the team composition → 0,
     # second forager → 1, non-forager → one of {0, 1, 2}
     non_forager_slots_per_player = non_forager_room_slots[player_sc]   # (player_count,)
+    # When spread_non_foragers_across_rooms is enabled, assign each team's
+    # non-foragers to distinct rooms round-robin by their within-team rank:
+    # first takes the lone room C, then rooms A and B, wrapping after three.
+    spread_room_order = jnp.array([2, 0, 1], dtype=jnp.int32)
+    non_forager_spread_slots = spread_room_order[
+        non_forager_rank_by_slot[within_team_slot] % 3
+    ]
+    non_forager_slots_per_player = jnp.where(
+        params.spread_non_foragers_across_rooms,
+        non_forager_spread_slots,
+        non_forager_slots_per_player,
+    )
     # Cap to [0,1] so compositions with >2 foragers still map into the two-room layout.
     forager_room_slot = forager_rank_by_slot[within_team_slot]
     room_pair_slot = jnp.where(is_forager, forager_room_slot, non_forager_slots_per_player)  # (player_count,)
