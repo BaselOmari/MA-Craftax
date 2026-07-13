@@ -17,6 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
 import datetime
+import time
 import functools
 import tempfile
 import yaml
@@ -939,6 +940,9 @@ def make_train(config, env):
 
             rng = update_state[-1]
 
+            #State for sps computations
+            _sps_state = {'last_time':None, 'last_env_step': None}
+
             def callback(metrics, step):
                 env_step = (
                     metrics["update_steps"]
@@ -964,6 +968,20 @@ def make_train(config, env):
                     agents_per_team = int(np.ceil(num_agents / num_teams))
 
                 to_log = {}
+
+                # Steps per second. Measures env-step throughput between logging calls
+                # Note: SPS drops during logging phases when videos are being saved.
+                # This is expected and not a training slowdown
+                _now = time.perf_counter()
+                _current_env_step = int(env_step)
+                if _sps_state["last_time"] is not None:
+                    _elapsed = _now - _sps_state["last_time"]
+                    _steps_taken = _current_env_step - _sps_state["last_env_step"]
+                    if _elapsed > 0:
+                        to_log["overview/sps"] = _steps_taken/_elapsed
+                
+                _sps_state["last_time"] = _now
+                _sps_state["last_env_step"] = _current_env_step
 
                 # ── overview/ ──
                 to_log["overview/env_step"] = env_step
@@ -1621,6 +1639,8 @@ def single_run(config):
     warrior_to_warrior_food_trade_reward = config.get("WARRIOR_TO_WARRIOR_FOOD_TRADE_REWARD", 0.0)
     warrior_to_warrior_drink_trade_reward = config.get("WARRIOR_TO_WARRIOR_DRINK_TRADE_REWARD", 0.0)
     trade_reward_requires_both_outside_starter_room = config.get("TRADE_REWARD_REQUIRES_BOTH_OUTSIDE_STARTER_ROOM", False)
+    melee_mobs_despawn_when_far = config.get("MELEE_MOBS_DESPAWN_WHEN_FAR", False)
+    melee_mob_despawn_distance = int(config.get("MELEE_MOB_DESPAWN_DISTANCE", 14))
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     enable_warrior_to_warrior_trading = config.get("ENABLE_WARRIOR_TO_WARRIOR_TRADING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
@@ -1693,6 +1713,8 @@ def single_run(config):
         "trade_reward_requires_both_outside_starter_room": trade_reward_requires_both_outside_starter_room,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
+        "melee_mobs_despawn_when_far":melee_mobs_despawn_when_far,
+        "melee_mob_despawn_distance":melee_mob_despawn_distance,
         "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,
         "initial_predators_spawn_in_warrior_rooms_only": initial_predators_spawn_in_warrior_rooms_only,
         "non_forager_always_in_lone_room": non_forager_always_in_lone_room,
