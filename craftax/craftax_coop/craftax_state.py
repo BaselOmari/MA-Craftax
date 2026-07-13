@@ -177,6 +177,7 @@ class EnvParams:
     ranged_mob_health: int = 3
 
     mob_despawn_distance: int = 500
+    melee_mob_despawn_distance: int = 14
     max_attribute: int = 5
 
 
@@ -210,6 +211,7 @@ class EnvParams:
     warrior_to_warrior_drink_trade_reward: float = 0.0 #Bonus given to warriors for successfully hydrating another warrior
     warrior_to_warrior_food_trade_reward: float = 0.0 #Bonus given to warriors for succesfully feeding another warrior
     trade_reward_requires_both_outside_starter_room: bool = False  # If True, food/drink trade bonuses only pay when both traders are outside their own starter rooms.
+    melee_mobs_despawn_when_far: bool = False # If true, predators despawn when far away enough from player. Note: distance must be set with the mob despawn distance flag
     enable_auto_respawning: bool = False  # If True, auto-revive dead agents after auto_respawn_steps.
     auto_respawn_steps: int = 50  # Dead-step threshold for auto-respawn when enabled.
     restrict_auto_respawning_to_spawn_room: bool = True  # If True, auto-respawn only triggers when the dead agent is inside its own starter room.

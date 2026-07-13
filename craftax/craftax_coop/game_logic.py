@@ -1661,9 +1661,13 @@ def update_mobs(rng, state, params, env_params, static_params):
             melee_mobs.position[state.player_level, melee_mob_index],
         )
 
-        # Keep melee enemies persistent across the arena (no distance-based despawn).
+        # Melee despawn behavior depends on config flag
         # Passive mobs (including snails) use their own logic and are unchanged.
-        should_not_despawn = jnp.asarray(True)
+        should_not_despawn = jax.lax.select(
+            params.melee_mobs_despawn_when_far,
+            (distance_to_players < params.melee_mob_despawn_distance).any(),  # if flag=True. distance-gated and can despawn
+            jnp.asarray(True), # if flag=False always persist
+        )
 
         rng, _rng = jax.random.split(rng)
 
