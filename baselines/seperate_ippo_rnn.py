@@ -1641,6 +1641,7 @@ def single_run(config):
     trade_reward_requires_both_outside_starter_room = config.get("TRADE_REWARD_REQUIRES_BOTH_OUTSIDE_STARTER_ROOM", False)
     melee_mobs_despawn_when_far = config.get("MELEE_MOBS_DESPAWN_WHEN_FAR", False)
     melee_mob_despawn_distance = int(config.get("MELEE_MOB_DESPAWN_DISTANCE", 14))
+    passive_mobs_static = config.get("PASSIVE_MOBS_STATIC", False)
     enable_auto_respawning = config.get("ENABLE_AUTO_RESPAWNING", False)
     enable_warrior_to_warrior_trading = config.get("ENABLE_WARRIOR_TO_WARRIOR_TRADING", False)
     auto_respawn_steps = int(config.get("AUTO_RESPAWN_STEPS", 50))
@@ -1712,8 +1713,9 @@ def single_run(config):
         "trade_reward_requires_both_outside_starter_room": trade_reward_requires_both_outside_starter_room,
         "enable_auto_respawning": enable_auto_respawning,
         "auto_respawn_steps": auto_respawn_steps,
-        "melee_mobs_despawn_when_far":melee_mobs_despawn_when_far,
-        "melee_mob_despawn_distance":melee_mob_despawn_distance,
+        "melee_mobs_despawn_when_far": melee_mobs_despawn_when_far,
+        "melee_mob_despawn_distance": melee_mob_despawn_distance,
+        "passive_mobs_static": passive_mobs_static,
         "restrict_auto_respawning_to_spawn_room": restrict_auto_respawning_to_spawn_room,
         "initial_predators_spawn_in_warrior_rooms_only": initial_predators_spawn_in_warrior_rooms_only,
         "non_forager_always_in_lone_room": non_forager_always_in_lone_room,
