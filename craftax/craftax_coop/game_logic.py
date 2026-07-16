@@ -1724,36 +1724,56 @@ def update_mobs(rng, state, params, env_params, static_params):
         rng, state = rng_and_state
         passive_mobs = state.passive_mobs
 
-        # Random move
-        rng, _rng = jax.random.split(rng)
-        valid_random_moves = in_bounds(
-            DIRECTIONS_PASSIVE + passive_mobs.position[state.player_level, passive_mob_index],
-            static_params
-        )
-        random_move_direction = jax.random.choice(
-            _rng,
-            DIRECTIONS_PASSIVE,
-            p=valid_random_moves
-        )
-        proposed_position = (
-            passive_mobs.position[state.player_level, passive_mob_index]
-            + random_move_direction
-        )
+        def _move_it(rng_and_state):
+            rng, state = rng_and_state
+            passive_mobs = state.passive_mobs
 
-        mob_type = passive_mobs.type_id[state.player_level, passive_mob_index]
-        collision_map = MOB_TYPE_COLLISION_MAPPING[mob_type, 0]
-        valid_move = is_position_in_bounds_not_in_mob_not_colliding(
-            state, proposed_position[None, :], collision_map, static_params
-        )[0]
-        in_other_player = is_in_other_player(state, proposed_position[None, :])[0]
-        valid_move = jnp.logical_and(
-            valid_move,
-            jnp.logical_not(in_other_player)
-        )
-        position = jax.lax.select(
-            valid_move,
-            proposed_position,
-            passive_mobs.position[state.player_level, passive_mob_index],
+            # Random move
+            rng, _rng = jax.random.split(rng)
+            valid_random_moves = in_bounds(
+                DIRECTIONS_PASSIVE + passive_mobs.position[state.player_level, passive_mob_index],
+                static_params
+            )
+            random_move_direction = jax.random.choice(
+                _rng,
+                DIRECTIONS_PASSIVE,
+                p=valid_random_moves
+            )
+            proposed_position = (
+                passive_mobs.position[state.player_level, passive_mob_index]
+                + random_move_direction
+            )
+
+            mob_type = passive_mobs.type_id[state.player_level, passive_mob_index]
+            collision_map = MOB_TYPE_COLLISION_MAPPING[mob_type, 0]
+            valid_move = is_position_in_bounds_not_in_mob_not_colliding(
+                state, proposed_position[None, :], collision_map, static_params
+            )[0]
+            in_other_player = is_in_other_player(state, proposed_position[None, :])[0]
+            valid_move = jnp.logical_and(
+                valid_move,
+                jnp.logical_not(in_other_player)
+            )
+            position = jax.lax.select(
+                valid_move,
+                proposed_position,
+                passive_mobs.position[state.player_level, passive_mob_index],
+            )
+            
+            return position, rng
+        
+        def _stay_static(rng_and_state):
+            rng, state = rng_and_state
+            passive_mobs = state.passive_mobs
+            position = passive_mobs.position[state.player_level, passive_mob_index]
+            
+            return position, rng
+        
+        position, rng = jax.lax.cond(
+            params.passive_mobs_static,
+            _stay_static,
+            _move_it,
+            rng_and_state,
         )
 
         distance_to_players = jnp.abs(
