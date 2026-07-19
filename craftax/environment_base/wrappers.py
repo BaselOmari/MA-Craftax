@@ -364,6 +364,8 @@ class VideoPlotWrapper(GymnaxWrapper):
         info['num_monsters_killed'] = num_monsters_killed
         info['has_sword'] = env_state.inventory.sword
         info['has_pick'] = env_state.inventory.pickaxe
+        info['bow'] = env_state.inventory.bow
+        info['arrows'] = env_state.inventory.arrows
         info['held_iron'] = env_state.inventory.iron
 
         return obs, state, reward, done, info

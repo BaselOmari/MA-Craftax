@@ -1237,7 +1237,7 @@ def make_train(config, env):
                                    for k in ('delta_x', 'delta_y', 'pred_delta_x', 'pred_delta_y')]
                                   if _use_teammate_aux else []) + [
                              'num_monsters_killed',
-                             'has_sword', 'has_pick', 'held_iron', 'value',
+                             'has_sword', 'has_pick', 'bow', 'arrows', 'held_iron', 'value',
                              'entropy', 'log_prob', 'episode_id',
                             ]
 
@@ -1260,7 +1260,7 @@ def make_train(config, env):
                                            if _use_teammate_aux else []) + [
                                       'num_monsters_killed',
                                       'has_sword',
-                                      'has_pick', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
+                                      'has_pick', 'bow', 'arrows', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
                                         ]
 
                 run_out_path = get_run_output_dir()
