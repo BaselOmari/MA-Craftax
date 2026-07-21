@@ -115,4 +115,6 @@ def compute_step_event_info(state: EnvState):
         "melee_kills": state.log_melee_kills.astype(jnp.float32),
         "predator_hit": state.log_predator_hit.astype(jnp.float32),
         "auto_respawned": state.log_auto_respawned.astype(jnp.float32),
+        "target_tile_x": (state.player_position + DIRECTIONS[state.player_direction])[:, 0].astype(jnp.float32),
+        "target_tile_y": (state.player_position + DIRECTIONS[state.player_direction])[:, 1].astype(jnp.float32),
     }

@@ -1238,7 +1238,7 @@ def make_train(config, env):
                                   if _use_teammate_aux else []) + [
                              'num_monsters_killed',
                              'has_sword', 'has_pick', 'bow', 'arrows', 'held_iron', 'value',
-                             'entropy', 'log_prob', 'episode_id',
+                             'entropy', 'log_prob', 'episode_id', 'target_tile_x', 'target_tile_y',
                             ]
 
             # Callback function for logging hidden states
@@ -1261,6 +1261,7 @@ def make_train(config, env):
                                       'num_monsters_killed',
                                       'has_sword',
                                       'has_pick', 'bow', 'arrows', 'held_iron', 'value', 'entropy', 'log_prob', 'episode_id',
+                                       'target_tile_x', 'target_tile_y',
                                         ]
 
                 run_out_path = get_run_output_dir()
